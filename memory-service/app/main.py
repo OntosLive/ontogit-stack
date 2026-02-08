@@ -1,3 +1,6 @@
+
+# ONTOS_FACTS_V1
+from .facts_mvp import router as facts_router
 import os
 import uuid
 import subprocess
@@ -12,6 +15,7 @@ from app.recall_mvp import embed_and_upsert_scene, recall_hits
 
 # uvicorn запускает: app.main:app
 app = FastAPI(title="ontogit-memory-service")
+app.include_router(facts_router)
 
 ONTOGIT_DIR = Path(os.environ.get("ONTOGIT_DIR", "/ontogit")).resolve()
 
