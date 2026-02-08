@@ -1,30 +1,31 @@
-# ONTOS_FACTS_V1
+# ONTOS_FACTS_QDRANT_1536_V2
 from __future__ import annotations
 
 import os
 import uuid
+import subprocess
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-# We reuse the existing qdrant + git conventions:
-# - git is source of truth (facts saved as md)
-# - qdrant is index (payload for filtering; embeddings later)
-#
-# Manual-only: this router exposes /facts/commit and /facts/recall but does NOT auto-trigger anything.
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as rest
+
+from .recall_mvp import embed_text  # async embeddings via OpenAI (env: EMBED_*)
 
 router = APIRouter(prefix="/facts", tags=["facts"])
 
 FACTS_DIR = os.environ.get("ONTOGIT_FACTS_DIR", "/root/ontogit/facts")
 FACTS_COLLECTION = os.environ.get("ONTOGIT_FACTS_COLLECTION", "ontogit_facts")
+QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
+ONTOGIT_REPO = os.environ.get("ONTOGIT_REPO", "/root/ontogit")
 
 def _utc_ts() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 def _ym_path(ts_iso: str) -> str:
-    # ts like 2026-02-08T20:22:44Z -> 2026/02
     y = ts_iso[0:4]
     m = ts_iso[5:7]
     return os.path.join(y, m)
@@ -35,15 +36,38 @@ def _safe_slug(s: str) -> str:
     s = "-".join([p for p in s.split("-") if p])
     return s[:60] or "fact"
 
+def _qdrant() -> QdrantClient:
+    return QdrantClient(url=QDRANT_URL)
+
+def _ensure_collection() -> None:
+    qc = _qdrant()
+    try:
+        qc.get_collection(FACTS_COLLECTION)
+        return
+    except Exception:
+        pass
+    qc.create_collection(
+        collection_name=FACTS_COLLECTION,
+        vectors_config=rest.VectorParams(size=1536, distance=rest.Distance.COSINE),
+        on_disk_payload=True,
+    )
+
+def _git_commit(abs_path: str, msg: str) -> None:
+    try:
+        subprocess.run(["git", "-C", ONTOGIT_REPO, "add", abs_path], check=False)
+        subprocess.run(["git", "-C", ONTOGIT_REPO, "commit", "-m", msg], check=False)
+    except Exception:
+        return
+
 class FactCommitReq(BaseModel):
-    fact: str = Field(..., description="Small stable assertion (1-2 sentences).")
+    fact: str = Field(..., description="Small stable assertion (1-2 sentences). Manual-only.")
     tags: List[str] = Field(default_factory=list)
     importance: int = Field(default=3, ge=0, le=5)
     nodes: List[str] = Field(default_factory=list)
     vector_direction: Optional[str] = Field(default=None, description="forward|reverse (optional)")
     form: str = Field(default="fact", description="always 'fact' for L3")
     user_id: str = Field(default="default")
-    source_scene_id: Optional[str] = Field(default=None, description="Optional: link to a scene_id that produced this fact")
+    source_scene_id: Optional[str] = Field(default=None, description="Optional link to a scene_id that produced this fact")
 
 class FactCommitResp(BaseModel):
     fact_id: str
@@ -51,51 +75,13 @@ class FactCommitResp(BaseModel):
     timestamp: str
 
 class FactRecallReq(BaseModel):
-    query: str = Field(..., description="Search query (payload-only for now; embeddings later).")
+    query: str = Field(..., description="Semantic query (embeddings).")
     k: int = Field(default=5, ge=1, le=20)
     tags_any: List[str] = Field(default_factory=list)
     min_importance: int = Field(default=0, ge=0, le=5)
     nodes_any: List[str] = Field(default_factory=list)
     vector_direction: Optional[str] = None
     form: Optional[str] = "fact"
-
-# --- integration helpers ---
-def _get_main_module_refs():
-    """
-    Import from the existing app modules without creating hard coupling.
-    We expect memory-service/app/main.py to have:
-      - qdrant_client (or a getter)
-      - ensure_collection-like helper may exist; if not, we do best-effort upsert.
-      - git commit helper may exist; if not, we just write file and rely on repo being mounted.
-    """
-    try:
-        from . import main as main_mod  # type: ignore
-        return main_mod
-    except Exception:
-        return None
-
-def _qdrant_upsert(point_id: str, payload: Dict[str, Any]) -> None:
-    main_mod = _get_main_module_refs()
-    if not main_mod:
-        return
-    qc = getattr(main_mod, "qdrant_client", None)
-    if qc is None:
-        # some implementations store client on app.state
-        app = getattr(main_mod, "app", None)
-        qc = getattr(getattr(app, "state", object()), "qdrant", None)
-    if qc is None:
-        return
-    # Best-effort: use Qdrant client if present.
-    try:
-        # Lazy import to avoid hard dependency on qdrant-client types here
-        from qdrant_client.http import models as rest
-        qc.upsert(
-            collection_name=FACTS_COLLECTION,
-            points=[rest.PointStruct(id=point_id, payload=payload, vector=None)],
-        )
-    except Exception:
-        # If collection not present or vector required, ignore (we still have git as truth).
-        return
 
 def _write_fact_md(req: FactCommitReq, ts: str) -> (str, str):
     fact_id = f"{ts.replace(':','').replace('-','')}-{uuid.uuid4().hex[:8]}"
@@ -118,52 +104,34 @@ def _write_fact_md(req: FactCommitReq, ts: str) -> (str, str):
         "source_scene_id": req.source_scene_id or "",
     }
 
-    fm_lines = ["---"]
-    for k,v in front.items():
+    fm = ["---"]
+    for k, v in front.items():
         if isinstance(v, list):
-            fm_lines.append(f"{k}: [{', '.join([str(x) for x in v])}]")
+            fm.append(f"{k}: [{', '.join([str(x) for x in v])}]")
         else:
-            fm_lines.append(f"{k}: {v}")
-    fm_lines += ["---", ""]
-    body = "\n".join(fm_lines) + req.fact.strip() + "\n"
+            fm.append(f"{k}: {v}")
+    fm += ["---", ""]
+    body = "\n".join(fm) + req.fact.strip() + "\n"
 
     with open(abs_path, "w", encoding="utf-8") as f:
         f.write(body)
 
     return fact_id, abs_path
 
-def _git_commit(file_path: str, msg: str) -> None:
-    main_mod = _get_main_module_refs()
-    if not main_mod:
-        return
-    commit_fn = getattr(main_mod, "git_commit_file", None)
-    if callable(commit_fn):
-        try:
-            commit_fn(file_path, msg)
-            return
-        except Exception:
-            pass
-    # fallback: try shelling out if repo mounted and git exists
-    try:
-        import subprocess
-        repo = os.environ.get("ONTOGIT_REPO", "/root/ontogit")
-        subprocess.run(["git", "-C", repo, "add", file_path], check=False)
-        subprocess.run(["git", "-C", repo, "commit", "-m", msg], check=False)
-    except Exception:
-        return
-
 @router.get("/health")
 def facts_health():
-    return {"ok": True, "collection": FACTS_COLLECTION, "dir": FACTS_DIR}
+    return {"ok": True, "collection": FACTS_COLLECTION, "dir": FACTS_DIR, "qdrant": QDRANT_URL}
 
 @router.post("/commit", response_model=FactCommitResp)
-def facts_commit(req: FactCommitReq):
+async def facts_commit(req: FactCommitReq):
     if not req.fact or len(req.fact.strip()) < 4:
-        raise HTTPException(status_code=400, detail="fact is too short")
+        raise HTTPException(status_code=400, detail="fact too short")
+
     ts = _utc_ts()
     fact_id, abs_path = _write_fact_md(req, ts)
 
-    payload = {
+    payload: Dict[str, Any] = {
+        "type": "fact",
         "fact_id": fact_id,
         "timestamp": ts,
         "user_id": req.user_id,
@@ -173,70 +141,68 @@ def facts_commit(req: FactCommitReq):
         "vector_direction": req.vector_direction,
         "form": "fact",
         "source_scene_id": req.source_scene_id,
+        "git_path": abs_path,
         "text": req.fact.strip(),
-        "type": "fact",
     }
 
-    # upsert best-effort (git is truth)
-    _qdrant_upsert(point_id=str(uuid.uuid5(uuid.NAMESPACE_URL, fact_id)), payload=payload)
+    _ensure_collection()
+    qc = _qdrant()
+    vec = await embed_text(req.fact.strip())
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, fact_id))
+    qc.upsert(
+        collection_name=FACTS_COLLECTION,
+        points=[rest.PointStruct(id=point_id, vector=vec, payload=payload)],
+    )
 
-    # git commit best-effort
     _git_commit(abs_path, f"fact: {fact_id}")
 
     return FactCommitResp(fact_id=fact_id, git_path=abs_path, timestamp=ts)
 
 @router.post("/recall")
-def facts_recall(req: FactRecallReq):
-    # MVP: payload filtering only (no embeddings). We'll return the latest facts matching simple contains,
-    # relying on git as source of truth. Later: qdrant+embeddings hybrid.
-    # To keep it safe and deterministic: scan last N files on disk.
-    base = FACTS_DIR
-    if not os.path.isdir(base):
+async def facts_recall(req: FactRecallReq):
+    _ensure_collection()
+    qc = _qdrant()
+
+    q = (req.query or "").strip()
+    if not q:
         return {"hits": []}
 
-    # gather recent files
-    files = []
-    for root, _, names in os.walk(base):
-        for n in names:
-            if n.endswith(".md"):
-                files.append(os.path.join(root, n))
-    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    files = files[:500]
+    must = []
+    if req.form:
+        must.append(rest.FieldCondition(key="form", match=rest.MatchValue(value=req.form)))
+    if req.vector_direction:
+        must.append(rest.FieldCondition(key="vector_direction", match=rest.MatchValue(value=req.vector_direction)))
+    if req.tags_any:
+        must.append(rest.FieldCondition(key="tags", match=rest.MatchAny(any=req.tags_any)))
+    if req.nodes_any:
+        must.append(rest.FieldCondition(key="nodes", match=rest.MatchAny(any=req.nodes_any)))
+    if req.min_importance > 0:
+        must.append(rest.FieldCondition(key="importance", range=rest.Range(gte=req.min_importance)))
 
-    q = (req.query or "").lower().strip()
+    flt = rest.Filter(must=must) if must else None
+
+    vec = await embed_text(q)
+    res = qc.search(
+        collection_name=FACTS_COLLECTION,
+        query_vector=vec,
+        query_filter=flt,
+        limit=req.k,
+        with_payload=True,
+        with_vectors=False,
+    )
+
     hits = []
-    for fp in files:
-        try:
-            txt = open(fp, "r", encoding="utf-8").read()
-        except Exception:
-            continue
-        if q and q not in txt.lower():
-            continue
-        # cheap filters
-        if req.form and "form: fact" not in txt:
-            continue
-        if req.tags_any:
-            ok = False
-            for t in req.tags_any:
-                if t and t in txt:
-                    ok = True
-                    break
-            if not ok:
-                continue
-        # importance filter (best-effort)
-        if req.min_importance > 0:
-            m = re.search(r"importance:\s*([0-5])", txt)
-            if m and int(m.group(1)) < req.min_importance:
-                continue
-
-        # extract fact line (content after frontmatter)
-        parts = txt.split("---", 2)
-        fact = txt
-        if len(parts) >= 3:
-            fact = parts[2].strip()
-
-        hits.append({"git_path": fp, "fact": fact[:500], "score": 1.0})
-        if len(hits) >= req.k:
-            break
-
+    for r in res:
+        pl = r.payload or {}
+        hits.append({
+            "fact_id": pl.get("fact_id"),
+            "git_path": pl.get("git_path"),
+            "timestamp": pl.get("timestamp"),
+            "tags": pl.get("tags", []),
+            "importance": pl.get("importance", 0),
+            "nodes": pl.get("nodes", []),
+            "vector_direction": pl.get("vector_direction"),
+            "fact": (pl.get("text") or "")[:500],
+            "score": float(getattr(r, "score", 0.0)),
+        })
     return {"hits": hits}
