@@ -12,9 +12,11 @@ import yaml
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from app.recall_mvp import embed_and_upsert_scene, recall_hits
+from app.prefs_mvp import router as prefs_router  # ONTOS_PREFS_V1
 
 # uvicorn запускает: app.main:app
 app = FastAPI(title="ontogit-memory-service")
+app.include_router(prefs_router)
 app.include_router(facts_router)
 
 ONTOGIT_DIR = Path(os.environ.get("ONTOGIT_DIR", "/ontogit")).resolve()

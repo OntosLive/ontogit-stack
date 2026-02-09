@@ -4,6 +4,26 @@ from __future__ import annotations
 import os
 import uuid
 import subprocess
+
+# ONTOS_FACTS_QDRANT_URLLIB_FALLBACK
+import json
+import urllib.request
+
+def _http_post_json(url: str, payload: dict, timeout: int = 10) -> dict:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type":"application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8", errors="ignore")
+        return json.loads(body) if body else {}
+
+def _qdrant_search_http(collection: str, vector: list, limit: int, flt: dict | None):
+    url = f"{QDRANT_URL.rstrip('/')}/collections/{collection}/points/search"
+    payload = {"vector": vector, "limit": int(limit), "with_payload": True, "with_vector": False}
+    if flt:
+        payload["filter"] = flt
+    data = _http_post_json(url, payload, timeout=10)
+    return data.get("result", [])
+
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -17,10 +37,24 @@ from .recall_mvp import embed_text  # async embeddings via OpenAI (env: EMBED_*)
 
 router = APIRouter(prefix="/facts", tags=["facts"])
 
-FACTS_DIR = os.environ.get("ONTOGIT_FACTS_DIR", "/root/ontogit/facts")
+FACTS_DIR = os.environ.get("ONTOGIT_FACTS_DIR", "/ontogit/facts")  # container path
 FACTS_COLLECTION = os.environ.get("ONTOGIT_FACTS_COLLECTION", "ontogit_facts")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
-ONTOGIT_REPO = os.environ.get("ONTOGIT_REPO", "/root/ontogit")
+ONTOGIT_REPO = os.environ.get("ONTOGIT_REPO", "/ontogit")  # container repo root
+
+# ONTOS_FACTS_PATHMAP_V1
+ONTOGIT_HOST_DIR = os.environ.get("ONTOGIT_HOST_DIR", "/root/ontogit")  # host-visible path (for API responses)
+
+def _to_host_path(container_abs_path: str) -> str:
+    # Convert /ontogit/... -> /root/ontogit/... for operator convenience.
+    if not isinstance(container_abs_path, str):
+        return container_abs_path
+    if container_abs_path.startswith("/ontogit/"):
+        return ONTOGIT_HOST_DIR.rstrip("/") + container_abs_path[len("/ontogit"):]
+    if container_abs_path == "/ontogit":
+        return ONTOGIT_HOST_DIR
+    return container_abs_path
+
 
 def _utc_ts() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -142,6 +176,8 @@ async def facts_commit(req: FactCommitReq):
         "form": "fact",
         "source_scene_id": req.source_scene_id,
         "git_path": abs_path,
+        "git_path_host": _to_host_path(abs_path),
+        "git_path_container": abs_path,
         "text": req.fact.strip(),
     }
 
@@ -156,7 +192,7 @@ async def facts_commit(req: FactCommitReq):
 
     _git_commit(abs_path, f"fact: {fact_id}")
 
-    return FactCommitResp(fact_id=fact_id, git_path=abs_path, timestamp=ts)
+    return FactCommitResp(fact_id=fact_id, git_path=_to_host_path(abs_path), timestamp=ts)
 
 @router.post("/recall")
 async def facts_recall(req: FactRecallReq):
@@ -182,27 +218,42 @@ async def facts_recall(req: FactRecallReq):
     flt = rest.Filter(must=must) if must else None
 
     vec = await embed_text(q)
-    res = qc.search(
-        collection_name=FACTS_COLLECTION,
-        query_vector=vec,
-        query_filter=flt,
-        limit=req.k,
-        with_payload=True,
-        with_vectors=False,
-    )
+    # try native client search; fallback to HTTP if client lacks .search()
+    try:
+        res = qc.search(
+            collection_name=FACTS_COLLECTION,
+            query_vector=vec,
+            query_filter=flt,
+            limit=req.k,
+            with_payload=True,
+            with_vectors=False,
+        )
+        native = True
+    except AttributeError:
+        native = False
+        # build qdrant REST filter dict
+        flt_dict = None
+        if flt is not None:
+            # qdrant REST filter expects {"must":[...]}
+            flt_dict = {"must": []}
+            for cond in must:
+                # cond is rest.FieldCondition; serialize minimally
+                d = cond.dict()
+                flt_dict["must"].append(d)
+        res = _qdrant_search_http(FACTS_COLLECTION, vec, req.k, flt_dict)
 
     hits = []
     for r in res:
-        pl = r.payload or {}
+        pl = (r.payload if native else (r.get('payload') or {})) or {}
         hits.append({
             "fact_id": pl.get("fact_id"),
-            "git_path": pl.get("git_path"),
+            "git_path": (pl.get("git_path_host") or pl.get("git_path")),
             "timestamp": pl.get("timestamp"),
             "tags": pl.get("tags", []),
             "importance": pl.get("importance", 0),
             "nodes": pl.get("nodes", []),
             "vector_direction": pl.get("vector_direction"),
             "fact": (pl.get("text") or "")[:500],
-            "score": float(getattr(r, "score", 0.0)),
+            "score": float(getattr(r, "score", 0.0) if native else (r.get('score') or 0.0)),
         })
     return {"hits": hits}
