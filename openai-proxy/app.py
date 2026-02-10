@@ -3,10 +3,20 @@ import httpx, os, json, time
 
 OPENAI_BASE = "https://api.openai.com"
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
+DEFAULT_USER_ID = os.environ.get("DEFAULT_USER_ID", "")
 USAGE_WRITER_URL = os.environ.get("USAGE_WRITER_URL", "http://usage-writer:8091/usage")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
 
 app = FastAPI()
+
+
+def _pick_first_header(req: Request, keys: list[str]):
+    for k in keys:
+        v = req.headers.get(k)
+        if v:
+            return v
+    return None
+
 
 async def post_usage(event: dict):
     try:
@@ -69,15 +79,16 @@ async def proxy(path: str, req: Request):
                 model = resp_json.get("model") or "unknown"
                 event = {
                     "ts": int(time.time()),
-                    "user_id": None,
-                    "chat_id": None,
+                    "user_id": _pick_first_header(req or DEFAULT_USER_ID or None, ["x-openwebui-user-id","x-user-id","x-webui-user-id","x-forwarded-user","x-auth-user","x-ontogit-user"]),
+                    "chat_id": _pick_first_header(req, ["x-openwebui-chat-id","x-chat-id","x-conversation-id","x-openwebui-conversation-id"]),
                     "model": model,
                     "prompt_tokens": pt,
                     "completion_tokens": ct2,
                     "total_tokens": tt,
                     "cost_usd": (pt/1000.0)*0.0025 + (ct2/1000.0)*0.01,
                 }
-                await post_usage(event)
+                if event.get("user_id"):
+                    await post_usage(event)
         except Exception:
             pass
 
