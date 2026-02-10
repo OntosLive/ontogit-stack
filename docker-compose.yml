@@ -1,4 +1,35 @@
 services:
+
+  openai-proxy:
+    image: python:3.11-slim
+    env_file:
+      - .env
+    working_dir: /app
+    volumes:
+      - /root/ontogit-stack/openai-proxy:/app
+    environment:
+      - OPENAI_BASE=https://api.openai.com
+      - USAGE_WRITER_URL=http://usage-writer:8091/usage
+      - FORCE_NON_STREAM=1
+    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8088 --access-log"
+    ports:
+      - "8088:8088"
+    restart: unless-stopped
+
+
+  usage-writer:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - /root/ontogit-stack/usage-writer:/app
+      - /root/ontogit-user:/ontogit_user
+    environment:
+      - USAGE_DB=/ontogit_user/usage.db
+    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8091"
+    ports:
+      - "8091:8091"
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.16.3
     restart: unless-stopped
