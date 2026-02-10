@@ -1,11 +1,15 @@
 from fastapi import FastAPI, Request, Response
 import httpx, os, json, time
 
-OPENAI_BASE = "https://api.openai.com"
+OPENAI_BASE = os.environ.get("OPENAI_BASE", "https://api.openai.com")
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
 DEFAULT_USER_ID = os.environ.get("DEFAULT_USER_ID", "")
 USAGE_WRITER_URL = os.environ.get("USAGE_WRITER_URL", "http://usage-writer:8091/usage")
+USAGE_SUM_URL = os.environ.get("USAGE_SUM_URL", "http://usage-writer:8091/sum_usd")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
+LIMIT_BLOCK = float(os.environ.get("MONTHLY_LIMIT_USD", "15.0"))
+LIMIT_WARN_70 = float(os.environ.get("MONTHLY_WARN70_USD", "10.5"))
+LIMIT_WARN_90 = float(os.environ.get("MONTHLY_WARN90_USD", "13.5"))
 
 app = FastAPI()
 
@@ -24,6 +28,19 @@ async def post_usage(event: dict):
             await c.post(USAGE_WRITER_URL, json=event)
     except Exception:
         pass
+
+async def get_monthly_sum(user_id: str) -> float | None:
+    if not user_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(USAGE_SUM_URL, params={"user_id": user_id})
+            if r.status_code == 200:
+                data = r.json()
+                return float(data.get("sum_usd") or 0.0)
+    except Exception:
+        pass
+    return None
 
 @app.api_route("/{path:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
 async def proxy(path: str, req: Request):
@@ -56,6 +73,14 @@ async def proxy(path: str, req: Request):
         except Exception:
             pass
 
+    user_id = _pick_first_header(req, ["x-ontogit-user","x-openwebui-user-id","x-user-id","x-webui-user-id","x-forwarded-user","x-auth-user"]) or DEFAULT_USER_ID or "unknown"
+
+    # block only /v1/chat/completions when over limit
+    if req.method.upper() == "POST" and path == "v1/chat/completions" and user_id:
+        used = await get_monthly_sum(user_id)
+        if used is not None and used >= LIMIT_BLOCK:
+            return Response(content=json.dumps({"error": {"message": "monthly limit reached", "type": "rate_limit"}}), status_code=429, media_type="application/json")
+
     async with httpx.AsyncClient(timeout=None) as client:
         upstream = await client.request(
             req.method,
@@ -77,9 +102,16 @@ async def proxy(path: str, req: Request):
                 ct2 = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
                 tt = int(usage.get("total_tokens") or (pt + ct2))
                 model = resp_json.get("model") or "unknown"
+                used = await get_monthly_sum(user_id) if user_id else None
+                warn = None
+                if used is not None:
+                    if used >= LIMIT_WARN_90:
+                        warn = "warn90"
+                    elif used >= LIMIT_WARN_70:
+                        warn = "warn70"
                 event = {
                     "ts": int(time.time()),
-                    "user_id": _pick_first_header(req or DEFAULT_USER_ID or None, ["x-openwebui-user-id","x-user-id","x-webui-user-id","x-forwarded-user","x-auth-user","x-ontogit-user"]),
+                    "user_id": user_id,
                     "chat_id": _pick_first_header(req, ["x-openwebui-chat-id","x-chat-id","x-conversation-id","x-openwebui-conversation-id"]),
                     "model": model,
                     "prompt_tokens": pt,
@@ -87,8 +119,9 @@ async def proxy(path: str, req: Request):
                     "total_tokens": tt,
                     "cost_usd": (pt/1000.0)*0.0025 + (ct2/1000.0)*0.01,
                 }
-                if event.get("user_id"):
-                    await post_usage(event)
+                if warn:
+                    event["limit_warn"] = warn
+                await post_usage(event)
         except Exception:
             pass
 
