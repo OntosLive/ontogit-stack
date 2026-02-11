@@ -4,12 +4,15 @@ from .facts_mvp import router as facts_router
 import os
 import uuid
 import subprocess
+import hmac
+import sqlite3
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List
 
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from app.recall_mvp import embed_and_upsert_scene, recall_hits
 from app.prefs_mvp import router as prefs_router  # ONTOS_PREFS_V1
@@ -24,6 +27,155 @@ ONTOGIT_DIR = Path(os.environ.get("ONTOGIT_DIR", "/ontogit")).resolve()
 ENABLE_GIT_COMMIT = os.environ.get("ENABLE_GIT_COMMIT", "false").lower() in ("1", "true", "yes", "on")
 GIT_AUTHOR_NAME = os.environ.get("GIT_AUTHOR_NAME", "OntoGit")
 GIT_AUTHOR_EMAIL = os.environ.get("GIT_AUTHOR_EMAIL", "ontogit@local")
+from .ontogit_constants import (
+    SERVICE_AUTH_ENV,
+    SERVICE_AUTH_HEADER,
+    USER_ID_HEADER,
+    DAILY_TOKEN_LIMIT_ENV,
+    DAILY_REQUEST_LIMIT_ENV,
+    LIMIT_MODE_ENV,
+    ADMIN_USERS_ENV,
+    WARN_USER_ID_MISSING,
+)
+
+SERVICE_AUTH_SECRET = os.environ.get(SERVICE_AUTH_ENV, "")
+USAGE_DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
+_WARNED_MISSING_USER = False
+_WARNED_MISSING_SECRET = False
+_WARNED_LIMIT_LOG = False
+
+DAILY_TOKEN_LIMIT = int(os.environ.get(DAILY_TOKEN_LIMIT_ENV, "0") or 0)
+DAILY_REQUEST_LIMIT = int(os.environ.get(DAILY_REQUEST_LIMIT_ENV, "0") or 0)
+LIMIT_MODE = (os.environ.get(LIMIT_MODE_ENV, "soft") or "soft").lower()
+ADMIN_USERS = {
+    u.strip()
+    for u in (os.environ.get(ADMIN_USERS_ENV, "") or "").split(",")
+    if u.strip()
+}
+
+
+@app.middleware("http")
+async def service_auth_middleware(request: Request, call_next):
+    global _WARNED_MISSING_SECRET
+    if not SERVICE_AUTH_SECRET:
+        if not _WARNED_MISSING_SECRET:
+            _WARNED_MISSING_SECRET = True
+            print("[memory-service] missing service auth secret; deny-all enabled")
+        return Response(status_code=401)
+    provided = request.headers.get(SERVICE_AUTH_HEADER)
+    if not provided:
+        return Response(status_code=401)
+    if not hmac.compare_digest(provided, SERVICE_AUTH_SECRET):
+        return Response(status_code=401)
+    return await call_next(request)
+
+
+def _init_usage_db():
+    os.makedirs(os.path.dirname(USAGE_DB), exist_ok=True)
+    con = sqlite3.connect(USAGE_DB)
+    cur = con.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_usage_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts INTEGER NOT NULL,
+          user_id TEXT,
+          endpoint TEXT,
+          status_code INTEGER,
+          request_id TEXT,
+          tokens_in INTEGER,
+          tokens_out INTEGER
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_usage_ts ON memory_usage_events(ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_usage_user ON memory_usage_events(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_usage_endpoint ON memory_usage_events(endpoint)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_usage_user_ts ON memory_usage_events(user_id, ts)")
+    con.commit()
+    con.close()
+
+
+def _day_start_ts() -> int:
+    now = datetime.now(timezone.utc)
+    return int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
+
+
+def _count_tokens(text: str) -> int:
+    return len((text or "").split())
+
+
+def _get_daily_usage(con: sqlite3.Connection, user_id: str) -> tuple[int, int]:
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT COUNT(*), COALESCE(SUM(COALESCE(tokens_in,0) + COALESCE(tokens_out,0)), 0)
+        FROM memory_usage_events
+        WHERE user_id = ? AND ts >= ?
+        """,
+        (user_id, _day_start_ts()),
+    )
+    row = cur.fetchone()
+    reqs = int(row[0] or 0)
+    toks = int(row[1] or 0)
+    return reqs, toks
+
+
+def _check_limits(user_id: str, tokens_in: int, tokens_out: int) -> tuple[bool, str]:
+    if DAILY_REQUEST_LIMIT <= 0 and DAILY_TOKEN_LIMIT <= 0:
+        return False, ""
+    if user_id in ADMIN_USERS:
+        return False, "admin_bypass"
+    con = sqlite3.connect(USAGE_DB)
+    reqs, toks = _get_daily_usage(con, user_id)
+    con.close()
+    reqs_next = reqs + 1
+    toks_next = toks + max(0, int(tokens_in)) + max(0, int(tokens_out))
+    if DAILY_REQUEST_LIMIT > 0 and reqs_next > DAILY_REQUEST_LIMIT:
+        return True, "request_limit"
+    if DAILY_TOKEN_LIMIT > 0 and toks_next > DAILY_TOKEN_LIMIT:
+        return True, "token_limit"
+    return False, ""
+
+
+def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: int | None = None, tokens_out: int | None = None):
+    global _WARNED_MISSING_USER
+    user_id = (request.headers.get(USER_ID_HEADER) or "").strip() or "unknown"
+    if user_id == "unknown" and not _WARNED_MISSING_USER:
+        _WARNED_MISSING_USER = True
+        print(f"[memory-service] {WARN_USER_ID_MISSING}")
+
+    req_id = (request.headers.get("x-request-id") or "").strip() or None
+    if not req_id:
+        req_id = str(uuid.uuid4())
+    con = sqlite3.connect(USAGE_DB)
+    cur = con.cursor()
+    cur.execute(
+        """
+        INSERT INTO memory_usage_events(ts,user_id,endpoint,status_code,request_id,tokens_in,tokens_out)
+        VALUES(?,?,?,?,?,?,?)
+        """,
+        (int(time.time()), user_id, endpoint, int(status_code), req_id, tokens_in, tokens_out),
+    )
+    con.commit()
+    con.close()
+
+
+def _get_user_id(request: Request) -> str:
+    return (request.headers.get(USER_ID_HEADER) or "").strip() or "unknown"
+
+
+def _append_warn_header(response: Response, code: str):
+    prev = response.headers.get("X-Ontogit-Warn")
+    if not prev:
+        response.headers["X-Ontogit-Warn"] = code
+    elif code not in prev.split(","):
+        response.headers["X-Ontogit-Warn"] = prev + "," + code
+
+
+@app.on_event("startup")
+def _startup_usage():
+    _init_usage_db()
 
 
 def ensure_repo():
@@ -167,20 +319,33 @@ def health():
 
 
 @app.post("/recall", response_model=RecallResp)
-async def recall(req: RecallReq):
+async def recall(req: RecallReq, request: Request, response: Response):
     # RECALL_SERVER_GATE_V1
     q = (req.query or '').strip()
+    user_id = _get_user_id(request)
+    tokens_in = _count_tokens(req.query or "")
+    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0)
+    if limit_exceeded and LIMIT_MODE == "hard":
+        _record_usage(request, "recall", 429, tokens_in=tokens_in, tokens_out=0)
+        return Response(content='{"error":"quota_exceeded"}', status_code=429, media_type="application/json")
+    if limit_exceeded and LIMIT_MODE != "hard":
+        _append_warn_header(response, "quota_exceeded")
+    if user_id == "unknown":
+        _append_warn_header(response, "user_id_missing")
     # Backstop: do NOT spend embeddings/qdrant on short/ack queries unless forced
     if not getattr(req, 'force', False):
         if len(q) < int(os.getenv('RECALL_MIN_CHARS', '20')):
+            _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
             return RecallResp(hits=[])
         if q.lower() in ('ok','ок','ага','угу','да','понятно','принято','ага.','ок.','да.','угу.','понял'):
+            _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
             return RecallResp(hits=[])
     # END SERVER GATE
 
     try:
         results = await recall_hits(req.query, int(req.k), user_id=req.user_id, tags_any=req.tags_any, min_importance=int(req.min_importance), nodes_any=req.nodes_any, vector_direction=req.vector_direction, form=req.form)
     except Exception as e:
+        _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
         return RecallResp(hits=[])
     hits = []
     for r in results:
@@ -193,66 +358,86 @@ async def recall(req: RecallReq):
             quote=str(payload.get("quote") or payload.get("body_preview") or ""),
             tags=list(payload.get("tags") or []),
         ))
+    _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
     return RecallResp(hits=hits)
 
 
 @app.post("/commit")
-async def commit(req: CommitReq):
-    if not req.body or not req.body.strip():
-        raise HTTPException(status_code=400, detail="body is empty")
-    # Parse optional YAML frontmatter in body (8-layer schema)
-    fm, body_text = split_frontmatter(req.body)
-    body_text = (body_text or "").strip()
-    if not body_text:
-        raise HTTPException(status_code=400, detail="body is empty")
-
-    # Title: req.title -> fm.title -> first body line
-    title = (req.title or "").strip() or str(fm.get("title") or "").strip() or body_text.splitlines()[0][:80]
-
-    # Base meta (scene-template fields)
-    meta = {
-        "scene_id": "",
-        "title": title,
-        "timestamp": "",
-        "pulse": str(fm.get("pulse") or ""),
-        "vector": fm.get("vector") if "vector" in fm else "",
-        "archetype": str(fm.get("archetype") or ""),
-        "quote": str(fm.get("quote") or ""),
-        "tags": (req.tags if req.tags else (fm.get("tags") or [])),
-        "importance": int(req.importance) if req.importance is not None else int(fm.get("importance") or 3),
-        "user_id": req.user_id or str(fm.get("user_id") or "default"),
-    }
-
-    # Merge 8-layer blocks if provided
-    for k in ["excitation","distinction","form","subjectivity","structure_links","archetypes","vector"]:
-        if k in fm:
-            meta[k] = fm[k]
-
-    # Canonical quote/body_preview from CLEAN body
-    body_preview = " ".join(body_text.split())
-    meta["body_preview"] = body_preview[:240]
-    if not meta.get("quote"):
-        meta["quote"] = meta["body_preview"]
-
-    fpath = write_scene(meta, body_text)
-    git_commit(fpath, f"scene: {meta['scene_id']} | {title}")
-
-    # MVP: embeddings + upsert (do not fail commit if embedding/qdrant fails)
+async def commit(req: CommitReq, request: Request, response: Response):
+    status_code = 200
+    user_id = _get_user_id(request)
+    tokens_in = _count_tokens(req.body or "")
+    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0)
+    if limit_exceeded and LIMIT_MODE == "hard":
+        _record_usage(request, "commit", 429, tokens_in=tokens_in, tokens_out=0)
+        return Response(content='{"error":"quota_exceeded"}', status_code=429, media_type="application/json")
+    if limit_exceeded and LIMIT_MODE != "hard":
+        _append_warn_header(response, "quota_exceeded")
+    if user_id == "unknown":
+        _append_warn_header(response, "user_id_missing")
     try:
-        await embed_and_upsert_scene(
-            scene_id=meta['scene_id'],
-            title=meta['title'],
-            git_path=str(fpath.relative_to(ONTOGIT_DIR)),
-            user_id=meta.get("user_id","default"),
-            tags=list(meta.get("tags") or []),
-            importance=int(meta.get("importance") or 3),
-            body=body_text,
-            quote=str(meta.get('quote','')),
-            meta=meta,
-        )
+        if not req.body or not req.body.strip():
+            status_code = 400
+            raise HTTPException(status_code=400, detail="body is empty")
+        # Parse optional YAML frontmatter in body (8-layer schema)
+        fm, body_text = split_frontmatter(req.body)
+        body_text = (body_text or "").strip()
+        if not body_text:
+            status_code = 400
+            raise HTTPException(status_code=400, detail="body is empty")
+
+        # Title: req.title -> fm.title -> first body line
+        title = (req.title or "").strip() or str(fm.get("title") or "").strip() or body_text.splitlines()[0][:80]
+
+        # Base meta (scene-template fields)
+        meta = {
+            "scene_id": "",
+            "title": title,
+            "timestamp": "",
+            "pulse": str(fm.get("pulse") or ""),
+            "vector": fm.get("vector") if "vector" in fm else "",
+            "archetype": str(fm.get("archetype") or ""),
+            "quote": str(fm.get("quote") or ""),
+            "tags": (req.tags if req.tags else (fm.get("tags") or [])),
+            "importance": int(req.importance) if req.importance is not None else int(fm.get("importance") or 3),
+            "user_id": req.user_id or str(fm.get("user_id") or "default"),
+        }
+
+        # Merge 8-layer blocks if provided
+        for k in ["excitation","distinction","form","subjectivity","structure_links","archetypes","vector"]:
+            if k in fm:
+                meta[k] = fm[k]
+
+        # Canonical quote/body_preview from CLEAN body
+        body_preview = " ".join(body_text.split())
+        meta["body_preview"] = body_preview[:240]
+        if not meta.get("quote"):
+            meta["quote"] = meta["body_preview"]
+
+        fpath = write_scene(meta, body_text)
+        git_commit(fpath, f"scene: {meta['scene_id']} | {title}")
+
+        # MVP: embeddings + upsert (do not fail commit if embedding/qdrant fails)
+        try:
+            await embed_and_upsert_scene(
+                scene_id=meta['scene_id'],
+                title=meta['title'],
+                git_path=str(fpath.relative_to(ONTOGIT_DIR)),
+                user_id=meta.get("user_id","default"),
+                tags=list(meta.get("tags") or []),
+                importance=int(meta.get("importance") or 3),
+                body=body_text,
+                quote=str(meta.get('quote','')),
+                meta=meta,
+            )
+        except Exception:
+            pass
+
+        return {"ok": True, "scene_id": meta["scene_id"], "path": str(fpath.relative_to(ONTOGIT_DIR))}
+    except HTTPException:
+        raise
     except Exception:
-        pass
-
-
-
-    return {"ok": True, "scene_id": meta["scene_id"], "path": str(fpath.relative_to(ONTOGIT_DIR))}
+        status_code = 500
+        raise
+    finally:
+        _record_usage(request, "commit", status_code, tokens_in=tokens_in, tokens_out=0)
