@@ -29,6 +29,16 @@
 - Клиенты вызывают **OpenWebUI backend**: `/api/v1/ontogit_recall`
 - Backend добавляет `X-Ontos-Service-Auth` + `X-Ontogit-User` и форвардит в memory-service `/recall`.
 
+### User-id source (no constant injection)
+- Source of truth для user id: внутренний authenticated user id из OpenWebUI backend.
+- OpenWebUI backend прокидывает его в OpenAI proxy как `X-OpenWebUI-User-Id`.
+- OpenAI proxy использует `X-OpenWebUI-User-Id` как primary source и маппит в `X-Ontogit-User` для usage/limits/memory-service.
+- Для совместимости допускается `X-Ontogit-User` с тем же значением.
+- Запрещена константная подстановка user id на прокси-уровне (например, `andrey` в nginx).
+- Если user id определить нельзя, прокси использует `user_id="unknown"`; memory-service выставляет warning.
+- Dev fallback допустим только при явной настройке `ONTOGIT_DEV_FALLBACK_USER_ID`.
+- JWT-путь для вычисления user id в proxy-слое не является каноническим и вне текущего production-процесса.
+
 ## D) Ошибки/коды
 - **Service-auth fail** → `401` без деталей (пустое тело или `{"error":"unauthorized"}`).
 - Если `ONTOS_SERVICE_AUTH_SECRET` не задан, memory-service работает в режиме **deny-all** (все запросы → `401`).

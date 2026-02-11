@@ -15,10 +15,7 @@ services:
     restart: unless-stopped
     environment:
       OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-http://openai-proxy:8088}
-      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
-      FALLBACK_USER: ${FALLBACK_USER:-andrey}
-      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-3600}
-      ONTOS_JWT_SECRET: ${ONTOS_JWT_SECRET:-}
+      ONTOGIT_DEV_FALLBACK_USER_ID: ${ONTOGIT_DEV_FALLBACK_USER_ID:-}
   openai-proxy:
     image: python:3.11-slim
     env_file:
@@ -31,6 +28,7 @@ services:
     - USAGE_WRITER_URL=http://usage-writer:8091/usage
     - USAGE_WRITER_BASE=http://usage-writer:8091
     - FORCE_NON_STREAM=1
+    - ONTOGIT_DEV_FALLBACK_USER_ID=${ONTOGIT_DEV_FALLBACK_USER_ID:-}
     command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
       --port 8088 --access-log"
     ports:

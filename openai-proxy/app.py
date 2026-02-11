@@ -3,7 +3,10 @@ import httpx, os, json, time
 
 OPENAI_BASE = os.environ.get("OPENAI_BASE", "https://api.openai.com")
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
-DEFAULT_USER_ID = os.environ.get("DEFAULT_USER_ID", "")
+DEV_FALLBACK_USER_ID = os.environ.get(
+    "ONTOGIT_DEV_FALLBACK_USER_ID",
+    os.environ.get("ONTOGIT_FALLBACK_USER_ID", os.environ.get("DEFAULT_USER_ID", "")),
+).strip()
 USAGE_WRITER_URL = os.environ.get("USAGE_WRITER_URL", "http://usage-writer:8091/usage")
 USAGE_WRITER_BASE = os.environ.get("USAGE_WRITER_BASE", "http://usage-writer:8091")
 USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
@@ -63,6 +66,19 @@ def _limit_headers(user_id: str, used: float | None, limit: float, warn_level: s
         "X-Ontogit-Warn": warn_level,
     }
 
+
+def _resolve_user_id(req: Request) -> str | None:
+    user_id = _pick_first_header(
+        req,
+        ["x-openwebui-user-id", "x-ontogit-user", "x-user-id", "x-webui-user-id", "x-forwarded-user", "x-auth-user"],
+    )
+    if user_id:
+        return user_id
+
+    if DEV_FALLBACK_USER_ID:
+        return DEV_FALLBACK_USER_ID
+    return "unknown"
+
 @app.api_route("/{path:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
 async def proxy(path: str, req: Request):
     url = f"{OPENAI_BASE}/{path}"
@@ -94,7 +110,7 @@ async def proxy(path: str, req: Request):
         except Exception:
             pass
 
-    user_id = _pick_first_header(req, ["x-ontogit-user","x-openwebui-user-id","x-user-id","x-webui-user-id","x-forwarded-user","x-auth-user"]) or DEFAULT_USER_ID or "unknown"
+    user_id = _resolve_user_id(req)
     used = await get_used(user_id) if user_id else None
     limits = await get_limits(user_id) if user_id else None
     limit_usd = float((limits or {}).get("limit_usd") or 0.0)
