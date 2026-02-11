@@ -1,79 +1,80 @@
 services:
-
   header-injector:
-    image: nginx:1.27-alpine
+    image: python:3.11-slim
+    env_file:
+    - .env
+    working_dir: /app
     volumes:
-      - ./header-injector/nginx.conf:/etc/nginx/nginx.conf:ro
+    - ./header-injector:/app
     depends_on:
-      - openai-proxy
+    - openai-proxy
+    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
+      --port 8089 --access-log"
     ports:
-      - "8089:8089"
+    - 8089:8089
     restart: unless-stopped
-
+    environment:
+    - OPENAI_PROXY_URL=http://openai-proxy:8088
   openai-proxy:
     image: python:3.11-slim
     env_file:
-      - .env
+    - .env
     working_dir: /app
     volumes:
-      - ./openai-proxy:/app
+    - ./openai-proxy:/app
     environment:
-      - OPENAI_BASE=https://api.openai.com
-      - USAGE_WRITER_URL=http://usage-writer:8091/usage
-      - FORCE_NON_STREAM=1
-    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8088 --access-log"
+    - OPENAI_BASE=https://api.openai.com
+    - USAGE_WRITER_URL=http://usage-writer:8091/usage
+    - FORCE_NON_STREAM=1
+    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
+      --port 8088 --access-log"
     ports:
-      - "8088:8088"
+    - 8088:8088
     restart: unless-stopped
-
-
   usage-writer:
     image: python:3.11-slim
     working_dir: /app
     volumes:
-      - ./usage-writer:/app
-      - ./openwebui-data:/ontogit_user
+    - ./usage-writer:/app
+    - ./openwebui-data:/ontogit_user
     environment:
-      - USAGE_DB=/ontogit_user/usage.db
-    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8091"
+    - USAGE_DB=/ontogit_user/usage.db
+    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
+      --port 8091"
     ports:
-      - "8091:8091"
+    - 8091:8091
     restart: unless-stopped
-
   qdrant:
     image: qdrant/qdrant:v1.16.3
     restart: unless-stopped
     volumes:
-      - qdrant_storage:/qdrant/storage
-    # наружу не светим, только внутри docker-сети
+    - qdrant_storage:/qdrant/storage
     ports:
-      - "127.0.0.1:6333:6333"
-
+    - 127.0.0.1:6333:6333
   memory-service:
     build: ./memory-service
     restart: unless-stopped
     environment:
-      - QDRANT_URL=http://qdrant:6333
-      - ENABLE_GIT_COMMIT=1
-      - GIT_COMMITTER_NAME=OntoGit
-      - GIT_COMMITTER_EMAIL=ontogit@local
-      - ONTOGIT_DIR=/ontogit
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION=ontogit_scenes
-      - EMBED_BASE_URL=${EMBED_BASE_URL}
-      - EMBED_API_KEY=${EMBED_API_KEY}
-      - EMBED_MODEL=${EMBED_MODEL}
-      - GIT_AUTHOR_NAME=OntoGit
-      - GIT_AUTHOR_EMAIL=ontogit@local
-      - ONTOGIT_HOST_DIR=/root/ontogit
+    - QDRANT_URL=http://qdrant:6333
+    - ENABLE_GIT_COMMIT=1
+    - GIT_COMMITTER_NAME=OntoGit
+    - GIT_COMMITTER_EMAIL=ontogit@local
+    - ONTOGIT_DIR=/ontogit
+    - QDRANT_URL=http://qdrant:6333
+    - QDRANT_COLLECTION=ontogit_scenes
+    - EMBED_BASE_URL=${EMBED_BASE_URL}
+    - EMBED_API_KEY=${EMBED_API_KEY}
+    - EMBED_MODEL=${EMBED_MODEL}
+    - GIT_AUTHOR_NAME=OntoGit
+    - GIT_AUTHOR_EMAIL=ontogit@local
+    - ONTOGIT_HOST_DIR=/root/ontogit
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+    - host.docker.internal:host-gateway
     volumes:
-      - /root/ontogit:/ontogit
-      - ./openwebui-data:/ontogit_user
-      - ./memory-service/app:/app/app
+    - /root/ontogit:/ontogit
+    - ./openwebui-data:/ontogit_user
+    - ./memory-service/app:/app/app
     ports:
-      - "127.0.0.1:8090:8090"
-
+    - 127.0.0.1:8090:8090
 volumes:
-  qdrant_storage:
+  qdrant_storage: null
