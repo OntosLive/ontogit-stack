@@ -1,3 +1,10 @@
 .env
 __pycache__/
 *.bak*
+openwebui-data/usage.db
+
+openwebui-data/
+*.db
+
+openwebui-data/
+*.db

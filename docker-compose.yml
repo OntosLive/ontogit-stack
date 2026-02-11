@@ -14,7 +14,11 @@ services:
     - 8089:8089
     restart: unless-stopped
     environment:
-    - OPENAI_PROXY_URL=http://openai-proxy:8088
+      OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-http://openai-proxy:8088}
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-0}
+      FALLBACK_USER: ${FALLBACK_USER:-andrey}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-3600}
+      ONTOS_JWT_SECRET: ${ONTOS_JWT_SECRET}
   openai-proxy:
     image: python:3.11-slim
     env_file:

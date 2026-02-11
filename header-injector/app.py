@@ -4,7 +4,9 @@ import httpx
 
 UPSTREAM = os.environ.get("OPENAI_PROXY_URL", "http://openai-proxy:8088")
 JWT_SECRET = os.environ.get("ONTOS_JWT_SECRET", "")
-FALLBACK_USER = "andrey"
+AUTH_REQUIRED = os.environ.get("AUTH_REQUIRED", "0") == "1"
+FALLBACK_USER = os.environ.get("FALLBACK_USER", "andrey")
+JWT_TTL_SECONDS = int(os.environ.get("JWT_TTL_SECONDS", "3600"))
 
 app = FastAPI()
 
@@ -29,14 +31,20 @@ def _verify_jwt(token: str) -> str | None:
             return None
         payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
         sub = payload.get("sub")
-        exp = int(payload.get("exp") or 0)
-        iat = int(payload.get("iat") or 0)
+        exp_raw = payload.get("exp")
+        iat_raw = payload.get("iat")
+        if exp_raw is None or iat_raw is None:
+            return None
+        exp = int(exp_raw)
+        iat = int(iat_raw)
         now = int(time.time())
         if not sub:
             return None
         if exp <= now:
             return None
         if iat and iat > now + 60:
+            return None
+        if exp - iat > JWT_TTL_SECONDS:
             return None
         return str(sub)
     except Exception:
@@ -54,6 +62,8 @@ async def proxy(path: str, req: Request):
         if not user_id:
             return Response(content=json.dumps({"error": "invalid_token"}), status_code=401, media_type="application/json")
     else:
+        if AUTH_REQUIRED:
+            return Response(content=json.dumps({"error": "auth_required"}), status_code=401, media_type="application/json")
         user_id = FALLBACK_USER
 
     headers = dict(req.headers)
