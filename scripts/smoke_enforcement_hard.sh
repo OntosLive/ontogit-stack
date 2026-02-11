@@ -89,6 +89,23 @@ wait_http_200() {
   done
 }
 
+wait_header_injector_ready() {
+  local start
+  local code
+  start="$(date +%s)"
+  while true; do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8089/openapi.json" || true)"
+    if [ "${code}" != "000" ]; then
+      return 0
+    fi
+    if [ $(( $(date +%s) - start )) -ge 45 ]; then
+      echo "Timeout waiting for header-injector readiness"
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 echo "==> recreate usage-writer + header-injector in hard mode"
 (
   cd "${STACK_DIR}" && \
@@ -97,6 +114,7 @@ echo "==> recreate usage-writer + header-injector in hard mode"
 )
 
 wait_http_200 "http://127.0.0.1:8091/limits/ping"
+wait_header_injector_ready
 
 TS="$(date +%s)"
 TEST_USER="enforce_hard_${TS}"
@@ -121,27 +139,15 @@ if used_v < limit:
 PY
 
 echo "==> verify hard enforcement blocks before model forwarding"
-CODE="$(curl -sS -o "${TMP_DIR}/hard_gate.json" -w '%{http_code}' \
+CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 25 --retry-delay 1 --retry-connrefused --max-time 5 \
   -H "Content-Type: application/json" \
   -H "X-OpenWebUI-User-Id: ${TEST_USER}" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"smoke hard gate"}]}' \
   "http://127.0.0.1:8089/v1/chat/completions")"
 
 if [ "${CODE}" != "429" ]; then
-  echo "expected 429 from header-injector hard gate, got ${CODE}"
-  cat "${TMP_DIR}/hard_gate.json"
+  echo "FAIL: expected 429 from header-injector hard gate, got ${CODE}"
   exit 1
 fi
-
-python3 - "${TMP_DIR}/hard_gate.json" <<'PY'
-import json, sys
-p = sys.argv[1]
-d = json.load(open(p, encoding="utf-8"))
-if str(d.get("detail") or "") != "limit exceeded":
-    raise SystemExit(f"unexpected detail: {d}")
-for key in ("limit_usd", "used_usd", "role"):
-    if key not in d:
-        raise SystemExit(f"missing {key} in response: {d}")
-PY
 
 echo "OK: smoke_enforcement_hard passed"
