@@ -35,6 +35,16 @@
 - D) Change limits: edit policy file -> recreate `usage-writer` -> run smoke.
 - E) Break-glass admin: set `admin_users` UUID list in policy -> recreate `usage-writer` -> run smoke.
 
+## Configurable Smoke Identities
+- `GOV_SMOKE_PRO_EMAIL` (default: `kontrabaobab@yandex.ru`)
+- `GOV_SMOKE_ADMIN_EMAIL` (default: `test@test.ru`)
+- `GOV_SMOKE_BASIC_EMAIL` (optional, default empty -> skipped)
+
+Example:
+```bash
+GOV_SMOKE_PRO_EMAIL=pro@example.com GOV_SMOKE_ADMIN_EMAIL=admin@example.com SMOKE_NO_RECREATE=1 ./scripts/smoke_governance.sh
+```
+
 ## Precedence Test
 - Use `test@test.ru` for precedence verification.
 - Put this user in BOTH groups: `role:admin` and `role:pro`.
