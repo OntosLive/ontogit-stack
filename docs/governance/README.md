@@ -45,6 +45,11 @@ Example:
 GOV_SMOKE_PRO_EMAIL=pro@example.com GOV_SMOKE_ADMIN_EMAIL=admin@example.com SMOKE_NO_RECREATE=1 ./scripts/smoke_governance.sh
 ```
 
+## Snapshot Bundle
+```bash
+./scripts/snapshot_governance_bundle.sh
+```
+
 ## Precedence Test
 - Use `test@test.ru` for precedence verification.
 - Put this user in BOTH groups: `role:admin` and `role:pro`.
