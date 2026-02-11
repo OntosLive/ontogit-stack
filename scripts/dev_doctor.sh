@@ -10,8 +10,9 @@ header() { echo; echo "==> $*"; }
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
-  if sudo -n docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -E -n docker"
+  if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -E docker"
+    echo "Using sudo docker (password may be required)"
     echo "Docker requires sudo in this environment"
   else
     echo "Docker not доступен (direct or sudo). Some checks may fail."

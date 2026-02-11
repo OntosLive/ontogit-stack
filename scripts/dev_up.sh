@@ -8,8 +8,9 @@ BUILD="${DEV_BUILD:-0}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
-  if sudo -n docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -E -n docker"
+  if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -E docker"
+    echo "Using sudo docker (password may be required)"
   fi
 fi
 
@@ -46,7 +47,13 @@ else
   WEBUI_BUILD_ARGS=()
 fi
 
-(cd "$STACK_DIR" && $DOCKER_CMD compose up -d "${STACK_BUILD_ARGS[@]}" "${STACK_ARGS[@]}")
-(cd "$WEBUI_DIR" && $DOCKER_CMD compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --pull always "${WEBUI_BUILD_ARGS[@]}" "${WEBUI_ARGS[@]}")
+(cd "$STACK_DIR" && $DOCKER_CMD compose up -d "${STACK_BUILD_ARGS[@]}" "${STACK_ARGS[@]}") || {
+  echo "docker compose up failed for ontogit-stack"
+  exit 1
+}
+(cd "$WEBUI_DIR" && $DOCKER_CMD compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --pull always "${WEBUI_BUILD_ARGS[@]}" "${WEBUI_ARGS[@]}") || {
+  echo "docker compose up failed for open-webui-src"
+  exit 1
+}
 
 "${STACK_DIR}/scripts/dev_doctor.sh"
