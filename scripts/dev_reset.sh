@@ -11,8 +11,15 @@ if [ "${DEV_RESET_I_UNDERSTAND:-}" != "YES" ]; then
   exit 1
 fi
 
-(cd "$STACK_DIR" && docker compose down)
-(cd "$WEBUI_DIR" && docker compose down)
+DOCKER_CMD="docker"
+if ! docker ps >/dev/null 2>&1; then
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -E -n docker"
+  fi
+fi
+
+(cd "$STACK_DIR" && $DOCKER_CMD compose down)
+(cd "$WEBUI_DIR" && $DOCKER_CMD compose down)
 
 echo "Deleting local data dirs:"
 echo "  $DATA_ONTOS_USER"

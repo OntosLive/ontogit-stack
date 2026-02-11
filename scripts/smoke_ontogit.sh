@@ -8,13 +8,26 @@ if [ -z "$SERVICE_SECRET" ]; then
 fi
 
 BASE_URL="http://127.0.0.1:8090"
-DB_PATH="./openwebui-data/usage.db"
+DB_PATH="/home/ontoslive/ontos_data/ontogit-user/usage.db"
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
   if sudo -n docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -n docker"
+    DOCKER_CMD="sudo -E -n docker"
+  fi
+fi
+
+ENV_FILE="${STACK_DIR}/.env.local"
+ENV_ARGS=()
+if $DOCKER_CMD compose --help 2>/dev/null | rg -q -- '--env-file'; then
+  ENV_ARGS=(--env-file "$ENV_FILE")
+else
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
   fi
 fi
 
@@ -72,11 +85,16 @@ export ONTOGIT_LIMIT_MODE=hard
 export ONTOGIT_ADMIN_USERS=admin
 
 echo "==> recreate memory-service with hard limits"
-(cd "$STACK_DIR" && $DOCKER_CMD compose up -d --force-recreate memory-service)
+(cd "$STACK_DIR" && $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
 wait_for_health
 
 echo "==> clear today's usage for user1/admin"
 today_start="$(date -u +"%s" -d "$(date -u +%Y-%m-%d) 00:00:00")"
+table_exists="$(sqlite3 "$DB_PATH" "select name from sqlite_master where type='table' and name='memory_usage_events';")"
+if [ "$table_exists" != "memory_usage_events" ]; then
+  echo "memory_usage_events table not found in $DB_PATH"
+  exit 1
+fi
 sqlite3 "$DB_PATH" "delete from memory_usage_events where user_id in ('user1','admin') and ts >= ${today_start};"
 
 echo "==> non-admin user should hit 429 on second request"
@@ -111,7 +129,7 @@ echo "==> restore normal mode (no limits)"
 unset ONTOGIT_DAILY_REQUEST_LIMIT
 unset ONTOGIT_LIMIT_MODE
 unset ONTOGIT_ADMIN_USERS
-(cd "$STACK_DIR" && $DOCKER_CMD compose up -d --force-recreate memory-service)
+(cd "$STACK_DIR" && $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
 wait_for_health
 
 echo "==> last 5 usage events"

@@ -4,5 +4,12 @@ set -euo pipefail
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
 
-(cd "$STACK_DIR" && docker compose down)
-(cd "$WEBUI_DIR" && docker compose down)
+DOCKER_CMD="docker"
+if ! docker ps >/dev/null 2>&1; then
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -E -n docker"
+  fi
+fi
+
+(cd "$STACK_DIR" && $DOCKER_CMD compose down)
+(cd "$WEBUI_DIR" && $DOCKER_CMD compose down)

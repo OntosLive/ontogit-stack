@@ -9,7 +9,7 @@ BUILD="${DEV_BUILD:-0}"
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
   if sudo -n docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -n docker"
+    DOCKER_CMD="sudo -E -n docker"
   fi
 fi
 
