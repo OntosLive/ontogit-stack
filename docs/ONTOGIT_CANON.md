@@ -89,6 +89,12 @@ ONTOGIT_ADMIN_USERS=admin,admin2
   - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user`
   - `/home/ontoslive/ontos_data/openwebui-data` → `/app/backend/data`
 
+## Codex-first workflow
+- Codex is the preferred executor for repository changes.
+- Prefer Codex task prompts over ad-hoc manual shell editing.
+- Operator role: run provided scripts and share outputs/logs; Codex role: edit files via reviewable diffs.
+- Never edit secrets; never run `dev_reset` unless explicitly requested.
+
 ## Autopilot modes (`scripts/autofix_smoke.sh`)
 - Safe mode (default):
   - Runs `dev_up.sh` with `DEV_PROFILE=minimal`, then `dev_doctor.sh`, then `smoke_ontogit.sh`.

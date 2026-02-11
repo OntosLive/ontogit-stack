@@ -4,6 +4,12 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 
 **Spec**: `docs/ONTOGIT_CANON.md` (authoritative canon for headers/env/recall route/limits/usage).
 
+## Codex-first workflow
+- Codex is the preferred executor for repo changes.
+- When requesting changes, provide a clear Codex task prompt.
+- Operator runs provided scripts and shares outputs/logs; Codex edits repo files via reviewable diffs.
+- Never edit secrets; never run `dev_reset` unless explicitly requested.
+
 **Dev Ops scripts**:
 - `scripts/dev_bootstrap.sh`
 - `scripts/dev_up.sh`
