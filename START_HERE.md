@@ -24,6 +24,12 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 3. For migration: stop service, backup target, copy `webui.db*` + `.webui_secret_key` + `uploads/`.
 4. Validate by opening UI and confirming existing users.
 
+## Operator switches
+- `scripts/ow_whereami.sh` - what universe is active right now.
+- `scripts/ow_local.sh` - switch OpenWebUI to local universe mounts.
+- `scripts/ow_vps.sh` - switch OpenWebUI to VPS universe mounts.
+- Universes are defined by the host path mounted to `/app/backend/data`.
+
 **Dev Ops scripts**:
 - `scripts/dev_bootstrap.sh`
 - `scripts/dev_up.sh`
