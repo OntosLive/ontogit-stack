@@ -16,6 +16,8 @@ services:
     environment:
       OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-http://openai-proxy:8088}
       ONTOGIT_DEV_FALLBACK_USER_ID: ${ONTOGIT_DEV_FALLBACK_USER_ID:-}
+      USAGE_WRITER_BASE: ${USAGE_WRITER_BASE:-http://usage-writer:8091}
+      ONTOGIT_LIMIT_MODE: ${ONTOGIT_LIMIT_MODE-soft}
   openai-proxy:
     image: python:3.11-slim
     env_file:
