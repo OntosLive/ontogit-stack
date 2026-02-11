@@ -12,4 +12,4 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
   USER_EMAIL=test@test.ru ./scripts/smoke_role_source.sh
 )
 
-echo "OK: smoke_governance passed"
+echo "GOVERNANCE OK"

@@ -4,6 +4,10 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 
 **Spec**: `docs/ONTOGIT_CANON.md` (authoritative canon for headers/env/recall route/limits/usage).
 
+## Governance
+- Governance: see `docs/governance/README.md`
+- Run: `./scripts/smoke_governance.sh`
+
 ## Codex-first workflow
 - Codex is the preferred executor for repo changes.
 - When requesting changes, provide a clear Codex task prompt.
