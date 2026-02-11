@@ -10,6 +10,20 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 - Operator runs provided scripts and shares outputs/logs; Codex edits repo files via reviewable diffs.
 - Never edit secrets; never run `dev_reset` unless explicitly requested.
 
+## Two spaces: Local (WSL2) vs Server (VPS)
+- We develop and run in two parallel environments:
+- A) Local / WSL2 (fast iteration)
+- B) Server / VPS (persistent users/chats)
+- These are different storage universes unless explicitly migrated.
+- OpenWebUI universe = `/app/backend/data` (host mount); different mounts = different universe.
+- Never assume accounts/chats transfer automatically.
+
+### Link protocol
+1. Identify compose project + config files via docker labels.
+2. Identify data mount for `/app/backend/data`.
+3. For migration: stop service, backup target, copy `webui.db*` + `.webui_secret_key` + `uploads/`.
+4. Validate by opening UI and confirming existing users.
+
 **Dev Ops scripts**:
 - `scripts/dev_bootstrap.sh`
 - `scripts/dev_up.sh`

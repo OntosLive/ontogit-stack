@@ -99,6 +99,11 @@ ONTOGIT_ADMIN_USERS=admin,admin2
   - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user`
   - `/home/ontoslive/ontos_data/openwebui-data` → `/app/backend/data`
 
+## Environment topology
+- Local (WSL2) and Server (VPS) are separate environments; data is not shared by default.
+- Canonical mount check for OpenWebUI:
+  - `sudo -E docker inspect open-webui --format 'project={{ index .Config.Labels "com.docker.compose.project" }} files={{ index .Config.Labels "com.docker.compose.project.config_files" }} mounts={{ range .Mounts }}{{ .Source }}->{{ .Destination }};{{ end }}'`
+
 ## Codex-first workflow
 - Codex is the preferred executor for repository changes.
 - Prefer Codex task prompts over ad-hoc manual shell editing.
