@@ -70,6 +70,8 @@ ROLE_FETCH_METHOD=""
 ROLE_FETCH_HTTP_CODE=""
 ROLE_FETCH_BODY=""
 ROLE_FETCH_CONTAINER=""
+ROLE_FETCH_RC=""
+ROLE_FETCH_STDERR=""
 
 _select_docker_role_fetch_container() {
   local name=""
@@ -95,6 +97,7 @@ _role_fetch_docker() {
   local role_url="$1"
   local container_name=""
   local body_file="${TMP_DIR}/role_fetch_docker_body.$$"
+  local err_file="${TMP_DIR}/role_fetch_docker_err.$$"
   local rc=0
   container_name="$(_select_docker_role_fetch_container || true)"
   if [ -z "${container_name}" ]; then
@@ -105,14 +108,14 @@ _role_fetch_docker() {
   ROLE_FETCH_CONTAINER="${container_name}"
   $DOCKER_CMD exec \
     -e ROLE_URL="${role_url}" \
-    -e SERVICE_SECRET="${SERVICE_SECRET}" \
+    -e ONTOS_SERVICE_AUTH_SECRET="${SERVICE_SECRET}" \
     -e USER_ID="${USER_ID}" \
     "${container_name}" \
     python3 - <<'PY'
 import os, urllib.request, sys
 url = os.environ["ROLE_URL"]
 req = urllib.request.Request(url, headers={
-  "X-Ontos-Service-Auth": os.environ["SERVICE_SECRET"],
+  "X-Ontos-Service-Auth": os.environ["ONTOS_SERVICE_AUTH_SECRET"],
   "X-OpenWebUI-User-Id": os.environ["USER_ID"],
 })
 try:
@@ -123,13 +126,17 @@ except Exception:
   print("", end="")
   sys.exit(2)
 PY
-  > "${body_file}" 2>/dev/null || rc=$?
+  > "${body_file}" 2> "${err_file}" || rc=$?
   if [ "${rc}" -ne 0 ]; then
     ROLE_FETCH_BODY=""
     ROLE_FETCH_HTTP_CODE="docker_exec_${rc}"
+    ROLE_FETCH_RC="${rc}"
+    ROLE_FETCH_STDERR="$(head -c 200 "${err_file}" 2>/dev/null || true)"
     return 1
   fi
   ROLE_FETCH_BODY="$(cat "${body_file}" 2>/dev/null || true)"
+  ROLE_FETCH_RC="0"
+  ROLE_FETCH_STDERR=""
   return 0
 }
 
@@ -140,6 +147,8 @@ get_role_json() {
   ROLE_FETCH_HTTP_CODE=""
   ROLE_FETCH_BODY=""
   ROLE_FETCH_CONTAINER=""
+  ROLE_FETCH_RC=""
+  ROLE_FETCH_STDERR=""
 
   ROLE_FETCH_METHOD="docker"
   _role_fetch_docker "${role_url}"
@@ -158,6 +167,12 @@ print_role_diag_and_exit() {
   echo "diag.method=${ROLE_FETCH_METHOD:-unknown}"
   echo "diag.container=${ROLE_FETCH_CONTAINER:-n/a}"
   echo "diag.http_code=${ROLE_FETCH_HTTP_CODE:-n/a}"
+  if [ -n "${ROLE_FETCH_RC:-}" ]; then
+    echo "diag.rc=${ROLE_FETCH_RC}"
+  fi
+  if [ -n "${ROLE_FETCH_STDERR:-}" ]; then
+    echo "diag.stderr_preview=${ROLE_FETCH_STDERR}"
+  fi
   echo "diag.body_preview=${preview}"
   echo "hint: curl -i http://127.0.0.1:3000/api/v1/ontogit/user_role"
   exit 1
