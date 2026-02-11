@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+LOCAL_PATH="/home/ontoslive/ontos_data/openwebui-data"
+VPS_LINK_PATH="/home/ontoslive/ontos_data/openwebui-data-vps-current"
+
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
   if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
@@ -34,5 +37,20 @@ DATA_MOUNT="$($DOCKER_CMD inspect open-webui --format '{{range .Mounts}}{{if eq 
 if [ -z "${DATA_MOUNT}" ]; then
   echo "active_universe: unknown (no /app/backend/data mount found)"
 else
-  echo "active_universe: ${DATA_MOUNT}"
+  echo "data_mount_host_path: ${DATA_MOUNT}"
+  if [ "${DATA_MOUNT}" = "${LOCAL_PATH}" ]; then
+    echo "active_universe: local (openwebui-data)"
+  elif [ "${DATA_MOUNT}" = "${VPS_LINK_PATH}" ]; then
+    echo "active_universe: vps-current (openwebui-data-vps-current)"
+  else
+    echo "active_universe: custom (${DATA_MOUNT})"
+  fi
+fi
+
+NETWORKS="$($DOCKER_CMD inspect open-webui --format '{{range $name, $_ := .NetworkSettings.Networks}}{{printf "%s\n" $name}}{{end}}' 2>/dev/null || true)"
+echo "networks:"
+if [ -n "${NETWORKS}" ]; then
+  printf '%s\n' "${NETWORKS}"
+else
+  echo "unknown"
 fi
