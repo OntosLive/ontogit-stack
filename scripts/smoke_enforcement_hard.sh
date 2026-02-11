@@ -3,9 +3,8 @@ set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
-TMP_DIR="/tmp/ontogit_smoke_enforcement_hard"
+TMP_DIR="$(mktemp -d /tmp/ontogit_smoke_enforcement_hard.XXXXXX)"
 HI_PORT="${HI_PORT:-8089}"
-mkdir -p "${TMP_DIR}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -40,6 +39,7 @@ cleanup() {
     ONTOGIT_LIMIT_MODE=soft \
     $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector >/dev/null
   ) || true
+  rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
