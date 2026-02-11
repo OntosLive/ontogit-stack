@@ -35,6 +35,7 @@ from .ontogit_constants import (
     DAILY_REQUEST_LIMIT_ENV,
     LIMIT_MODE_ENV,
     ADMIN_USERS_ENV,
+    WARN_SERVICE_AUTH,
     WARN_USER_ID_MISSING,
 )
 
@@ -42,6 +43,7 @@ SERVICE_AUTH_SECRET = os.environ.get(SERVICE_AUTH_ENV, "")
 USAGE_DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
 _WARNED_MISSING_USER = False
 _WARNED_MISSING_SECRET = False
+_WARNED_BAD_SERVICE_AUTH = False
 _WARNED_LIMIT_LOG = False
 
 DAILY_TOKEN_LIMIT = int(os.environ.get(DAILY_TOKEN_LIMIT_ENV, "0") or 0)
@@ -57,15 +59,22 @@ ADMIN_USERS = {
 @app.middleware("http")
 async def service_auth_middleware(request: Request, call_next):
     global _WARNED_MISSING_SECRET
+    global _WARNED_BAD_SERVICE_AUTH
     if not SERVICE_AUTH_SECRET:
         if not _WARNED_MISSING_SECRET:
             _WARNED_MISSING_SECRET = True
-            print("[memory-service] missing service auth secret; deny-all enabled")
+            print(f"[memory-service] {WARN_SERVICE_AUTH} (missing secret; deny-all enabled)")
         return Response(status_code=401)
     provided = request.headers.get(SERVICE_AUTH_HEADER)
     if not provided:
+        if not _WARNED_BAD_SERVICE_AUTH:
+            _WARNED_BAD_SERVICE_AUTH = True
+            print(f"[memory-service] {WARN_SERVICE_AUTH} (header missing)")
         return Response(status_code=401)
     if not hmac.compare_digest(provided, SERVICE_AUTH_SECRET):
+        if not _WARNED_BAD_SERVICE_AUTH:
+            _WARNED_BAD_SERVICE_AUTH = True
+            print(f"[memory-service] {WARN_SERVICE_AUTH} (mismatch)")
         return Response(status_code=401)
     return await call_next(request)
 
@@ -140,7 +149,7 @@ def _check_limits(user_id: str, tokens_in: int, tokens_out: int) -> tuple[bool, 
 
 def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: int | None = None, tokens_out: int | None = None):
     global _WARNED_MISSING_USER
-    user_id = (request.headers.get(USER_ID_HEADER) or "").strip() or "unknown"
+    user_id = _get_user_id(request)
     if user_id == "unknown" and not _WARNED_MISSING_USER:
         _WARNED_MISSING_USER = True
         print(f"[memory-service] {WARN_USER_ID_MISSING}")
@@ -162,7 +171,11 @@ def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: 
 
 
 def _get_user_id(request: Request) -> str:
-    return (request.headers.get(USER_ID_HEADER) or "").strip() or "unknown"
+    if hasattr(request.state, "ontogit_user_id"):
+        return request.state.ontogit_user_id
+    user_id = (request.headers.get(USER_ID_HEADER) or "").strip() or "unknown"
+    request.state.ontogit_user_id = user_id
+    return user_id
 
 
 def _append_warn_header(response: Response, code: str):
@@ -331,7 +344,7 @@ async def recall(req: RecallReq, request: Request, response: Response):
     if limit_exceeded and LIMIT_MODE != "hard":
         _append_warn_header(response, "quota_exceeded")
     if user_id == "unknown":
-        _append_warn_header(response, "user_id_missing")
+        _append_warn_header(response, WARN_USER_ID_MISSING)
     # Backstop: do NOT spend embeddings/qdrant on short/ack queries unless forced
     if not getattr(req, 'force', False):
         if len(q) < int(os.getenv('RECALL_MIN_CHARS', '20')):
@@ -343,7 +356,16 @@ async def recall(req: RecallReq, request: Request, response: Response):
     # END SERVER GATE
 
     try:
-        results = await recall_hits(req.query, int(req.k), user_id=req.user_id, tags_any=req.tags_any, min_importance=int(req.min_importance), nodes_any=req.nodes_any, vector_direction=req.vector_direction, form=req.form)
+        results = await recall_hits(
+            req.query,
+            int(req.k),
+            user_id=user_id,
+            tags_any=req.tags_any,
+            min_importance=int(req.min_importance),
+            nodes_any=req.nodes_any,
+            vector_direction=req.vector_direction,
+            form=req.form,
+        )
     except Exception as e:
         _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
         return RecallResp(hits=[])
@@ -374,7 +396,7 @@ async def commit(req: CommitReq, request: Request, response: Response):
     if limit_exceeded and LIMIT_MODE != "hard":
         _append_warn_header(response, "quota_exceeded")
     if user_id == "unknown":
-        _append_warn_header(response, "user_id_missing")
+        _append_warn_header(response, WARN_USER_ID_MISSING)
     try:
         if not req.body or not req.body.strip():
             status_code = 400
@@ -400,7 +422,7 @@ async def commit(req: CommitReq, request: Request, response: Response):
             "quote": str(fm.get("quote") or ""),
             "tags": (req.tags if req.tags else (fm.get("tags") or [])),
             "importance": int(req.importance) if req.importance is not None else int(fm.get("importance") or 3),
-            "user_id": req.user_id or str(fm.get("user_id") or "default"),
+            "user_id": user_id,
         }
 
         # Merge 8-layer blocks if provided

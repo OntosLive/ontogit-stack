@@ -5,6 +5,7 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
 DATA_ONTOS_USER="/home/ontoslive/ontos_data/ontogit-user"
 DATA_WEBUI="/home/ontoslive/ontos_data/openwebui-data"
+MARKER_DIR="${STACK_DIR}/ops/state"
 
 header() { echo; echo "==> $*"; }
 
@@ -91,8 +92,8 @@ secret_present="FAIL"
 if [ -f "${STACK_DIR}/.env.local" ] && rg -q "^ONTOS_SERVICE_AUTH_SECRET=\\S" "${STACK_DIR}/.env.local"; then secret_present="OK"; fi
 usage_db_present="FAIL"
 if [ -f "${DATA_ONTOS_USER}/usage.db" ]; then usage_db_present="OK"; fi
-profile="$(cat /tmp/ontogit_dev_profile 2>/dev/null || echo "${DEV_PROFILE:-minimal}")"
-build_used="$(cat /tmp/ontogit_dev_build 2>/dev/null || echo "${DEV_BUILD:-0}")"
+profile="$(cat "${MARKER_DIR}/dev_profile" 2>/dev/null || echo "${DEV_PROFILE:-minimal}")"
+build_used="$(cat "${MARKER_DIR}/dev_build" 2>/dev/null || echo "${DEV_BUILD:-0}")"
 ollama_running="no"
 if $DOCKER_CMD ps --format '{{.Names}}' | rg -q "^ollama$"; then ollama_running="yes"; fi
 build_label="no"

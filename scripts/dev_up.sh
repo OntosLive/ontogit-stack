@@ -5,6 +5,7 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
 PROFILE="${DEV_PROFILE:-minimal}"
 BUILD="${DEV_BUILD:-0}"
+MARKER_DIR="${STACK_DIR}/ops/state"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -27,8 +28,9 @@ if [ -f "${WEBUI_DIR}/.env.local" ]; then
   set +a
 fi
 
-PROFILE_FILE="/home/ontoslive/.cache/ontogit/dev_profile"
-BUILD_FILE="/home/ontoslive/.cache/ontogit/dev_build"
+mkdir -p "${MARKER_DIR}"
+PROFILE_FILE="${MARKER_DIR}/dev_profile"
+BUILD_FILE="${MARKER_DIR}/dev_build"
 echo "$PROFILE" > "$PROFILE_FILE"
 echo "$BUILD" > "$BUILD_FILE"
 
