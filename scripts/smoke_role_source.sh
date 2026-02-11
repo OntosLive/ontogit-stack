@@ -240,7 +240,7 @@ fi
 if [ -z "${USER_ID}" ] && [ -n "${OPENWEBUI_ADMIN_TOKEN}" ]; then
   AUTHS_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 \
     -H "Authorization: Bearer ${OPENWEBUI_ADMIN_TOKEN}" \
-    "${OPENWEBUI_BASE_URL}/api/v1/auths/" || true)"
+    "${OPENWEBUI_BASE_URL}/api/v1/auths/" 2>/dev/null || true)"
   USER_ID="$(python3 - "${AUTHS_JSON}" <<'PY'
 import json, sys
 raw = sys.argv[1]
@@ -339,9 +339,9 @@ if [ "${ROLE}" = "pro" ]; then
   FALLBACK_ROLE="basic"
 fi
 
-curl -sS -X PUT -H 'Content-Type: application/json' \
+curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 -X PUT -H 'Content-Type: application/json' \
   -d "{\"role\":\"${FALLBACK_ROLE}\",\"active\":1}" \
-  "http://127.0.0.1:8091/users/${USER_ID}" >/dev/null
+  "http://127.0.0.1:8091/users/${USER_ID}" >/dev/null 2>/dev/null || true
 
 if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
   (
