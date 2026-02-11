@@ -5,6 +5,7 @@ MSG="${1:-autofix-v2 pre-change savepoint}"
 TS="$(date +%Y-%m-%d_%H%M%S)"
 OUT_BASE="/home/ontoslive/ontogit/ops/state"
 OUT="${OUT_BASE}/${TS}-checkpoint"
+LATEST_POINTER_FILE="${OUT_BASE}/LATEST_POINTER.txt"
 
 STACK_REPO="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_REPO="/home/ontoslive/ontos_work/open-webui-src"
@@ -64,7 +65,10 @@ usage_db_saved=$( [ -f "${OUT}/data/usage.db" ] && echo "yes" || echo "no" )
 webui_db_saved=$( [ -f "${OUT}/data/webui.db" ] && echo "yes" || echo "no" )
 EOF
 
+printf '%s\n' "${OUT}" > "${LATEST_POINTER_FILE}"
+
 echo "[SAVE_LOCAL] checkpoint created: ${OUT}"
+echo "[SAVE_LOCAL] latest pointer updated: ${LATEST_POINTER_FILE}"
 echo "[SAVE_LOCAL] saved repo files:"
 echo "  - ${OUT}/repos/ontogit-stack/files.list"
 echo "  - ${OUT}/repos/open-webui-src/files.list"

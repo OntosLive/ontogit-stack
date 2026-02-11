@@ -1,12 +1,21 @@
 .env
 __pycache__/
 *.bak*
-openwebui-data/usage.db
 
+# Local data/runtime databases
 openwebui-data/
 *.db
+*.db-wal
+*.db-shm
 
-openwebui-data/
-*.db
+# Ops runtime artifacts (logs, temp files, marker files)
+ops/logs/
+ops/tmp/
+ops/state/*.log
+ops/state/dev_profile
+ops/state/dev_build
+ops/state/*.pid
+ops/state/*.tmp
+ops/state/LATEST_POINTER.txt
 
 PROMPT.txt

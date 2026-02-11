@@ -4,6 +4,7 @@ set -u -o pipefail
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 TOOLS_DIR="${STACK_DIR}/tools"
 LOG_DIR="${STACK_DIR}/ops/logs"
+MARKER_DIR="${STACK_DIR}/ops/state"
 LOG_TS="$(date +%Y%m%d_%H%M%S)"
 LOG_PATH="${LOG_DIR}/autofix_v2_${LOG_TS}.log"
 
@@ -13,23 +14,56 @@ RESTORE_DATA="${RESTORE_DATA:-NO}"
 BOOT_POINTER=""
 FAIL_CLASS="unknown"
 
+TIMEOUT_SAVE="${TIMEOUT_SAVE:-120}"
+TIMEOUT_UP="${TIMEOUT_UP:-900}"
+TIMEOUT_DOCTOR="${TIMEOUT_DOCTOR:-180}"
+TIMEOUT_SMOKE="${TIMEOUT_SMOKE:-600}"
+TIMEOUT_ROLLBACK="${TIMEOUT_ROLLBACK:-180}"
+
 if ! [[ "${MAX_ITERS}" =~ ^[0-9]+$ ]]; then MAX_ITERS=2; fi
 if [ "${MAX_ITERS}" -lt 1 ]; then MAX_ITERS=1; fi
 if [ "${MAX_ITERS}" -gt 2 ]; then MAX_ITERS=2; fi
 
 mkdir -p "${LOG_DIR}"
+mkdir -p "${MARKER_DIR}"
 exec > >(tee -a "${LOG_PATH}") 2>&1
+
+banner() { echo; echo "==> $*"; }
+
+on_signal() {
+  echo
+  echo "[autofix_v2] received signal; stopping child processes"
+  trap - INT TERM
+  pkill -TERM -P $$ >/dev/null 2>&1 || true
+  sleep 1
+  pkill -KILL -P $$ >/dev/null 2>&1 || true
+  echo "[autofix_v2] exiting cleanly after signal"
+  exit 130
+}
+trap on_signal INT TERM
+
+run_with_timeout() {
+  local t="$1"
+  shift
+  timeout --preserve-status "${t}" "$@"
+}
 
 echo "[autofix_v2] log: ${LOG_PATH}"
 echo "[autofix_v2] MAX_ITERS=${MAX_ITERS} AUTO_ROLLBACK=${AUTO_ROLLBACK} RESTORE_DATA=${RESTORE_DATA}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
-  if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
+  if sudo -n docker ps >/dev/null 2>&1; then
     DOCKER_CMD="sudo -E docker"
     echo "[autofix_v2] docker requires sudo; using 'sudo -E docker'"
   else
-    echo "[autofix_v2] docker is unavailable via direct and sudo access"
+    banner "waiting for sudo password (sudo -v)"
+    if sudo -v >/dev/null 2>&1 && sudo -E docker ps >/dev/null 2>&1; then
+      DOCKER_CMD="sudo -E docker"
+      echo "[autofix_v2] sudo validated; continuing with 'sudo -E docker'"
+    else
+      echo "[autofix_v2] docker is unavailable via direct and sudo access"
+    fi
   fi
 fi
 
@@ -46,7 +80,8 @@ if [ ! -x "${TOOLS_DIR}/ONTOS_SAVE_LOCAL.sh" ] || [ ! -x "${TOOLS_DIR}/ONTOS_ROL
   exit 1
 fi
 
-savepoint_out="$("${TOOLS_DIR}/ONTOS_SAVE_LOCAL.sh" "autofix_smoke_v2 pre-change savepoint" 2>&1)"
+banner "creating pre-change savepoint"
+savepoint_out="$(run_with_timeout "${TIMEOUT_SAVE}" "${TOOLS_DIR}/ONTOS_SAVE_LOCAL.sh" "autofix_smoke_v2 pre-change savepoint" 2>&1)"
 save_rc=$?
 echo "${savepoint_out}"
 if [ "${save_rc}" -ne 0 ]; then
@@ -64,13 +99,12 @@ echo "[autofix_v2] BOOT_POINTER=${BOOT_POINTER}"
 
 run_cycle() {
   local iter="$1"
-  echo "[autofix_v2] iteration ${iter}/${MAX_ITERS}"
-  echo "[autofix_v2] running dev_up.sh (minimal)"
-  DEV_PROFILE=minimal DEV_BUILD=0 "${STACK_DIR}/scripts/dev_up.sh" || return 11
-  echo "[autofix_v2] running dev_doctor.sh"
-  "${STACK_DIR}/scripts/dev_doctor.sh" || return 12
-  echo "[autofix_v2] running smoke_ontogit.sh"
-  "${STACK_DIR}/scripts/smoke_ontogit.sh" || return 13
+  banner "iteration ${iter}/${MAX_ITERS}: running compose up (dev_up.sh minimal)"
+  run_with_timeout "${TIMEOUT_UP}" env DEV_PROFILE=minimal DEV_BUILD=0 "${STACK_DIR}/scripts/dev_up.sh" || return 11
+  banner "iteration ${iter}/${MAX_ITERS}: running doctor"
+  run_with_timeout "${TIMEOUT_DOCTOR}" "${STACK_DIR}/scripts/dev_doctor.sh" || return 12
+  banner "iteration ${iter}/${MAX_ITERS}: running smoke (curl waits bounded by timeout)"
+  run_with_timeout "${TIMEOUT_SMOKE}" "${STACK_DIR}/scripts/smoke_ontogit.sh" || return 13
   return 0
 }
 
@@ -80,10 +114,10 @@ classify_failure() {
   reason="unknown smoke failure"
   action="Run: ${DOCKER_CMD} logs --tail 200 memory-service && ${STACK_DIR}/scripts/dev_doctor.sh"
 
-  if rg -q "(/home/ontoslive/.cache/ontogit/dev_profile|/home/ontoslive/.cache/ontogit/dev_build): Permission denied|Permission denied.*(/home/ontoslive/.cache/ontogit/dev_profile|/home/ontoslive/.cache/ontogit/dev_build)" "${LOG_PATH}"; then
+  if rg -q "(${MARKER_DIR}/dev_profile|${MARKER_DIR}/dev_build): Permission denied|Permission denied.*(${MARKER_DIR}/dev_profile|${MARKER_DIR}/dev_build)" "${LOG_PATH}"; then
     FAIL_CLASS="cache_permission"
-    reason="cache permission problem for dev profile/build markers"
-    action="Run: sudo mkdir -p /home/ontoslive/.cache/ontogit && sudo chown -R $USER:$USER /home/ontoslive/.cache/ontogit"
+    reason="permission problem for repo-local dev profile/build markers"
+    action="Run: mkdir -p ${MARKER_DIR} && sudo chown -R $USER:$USER ${MARKER_DIR}"
   elif rg -q "Missing ONTOS_SERVICE_AUTH_SECRET in environment" "${LOG_PATH}"; then
     FAIL_CLASS="missing_secret"
     reason="missing ONTOS_SERVICE_AUTH_SECRET"
@@ -193,8 +227,8 @@ if [ "${status}" -eq 0 ]; then
 fi
 
 if [ "${AUTO_ROLLBACK}" = "YES" ]; then
-  echo "[autofix_v2] persistent failure; running rollback from BOOT_POINTER=${BOOT_POINTER}"
-  RESTORE_DATA="${RESTORE_DATA}" "${TOOLS_DIR}/ONTOS_ROLLBACK_LOCAL.sh" "${BOOT_POINTER}" || true
+  banner "persistent failure: running rollback from BOOT_POINTER=${BOOT_POINTER}"
+  run_with_timeout "${TIMEOUT_ROLLBACK}" env RESTORE_DATA="${RESTORE_DATA}" "${TOOLS_DIR}/ONTOS_ROLLBACK_LOCAL.sh" "${BOOT_POINTER}" || true
 else
   echo "[autofix_v2] rollback not run automatically (AUTO_ROLLBACK=${AUTO_ROLLBACK})"
   echo "[autofix_v2] manual rollback:"

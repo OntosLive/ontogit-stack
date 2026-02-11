@@ -83,10 +83,25 @@ ONTOGIT_ADMIN_USERS=admin,admin2
   - `dev_bootstrap.sh` — создать локальные папки и `.env.local`
   - `dev_up.sh` / `dev_down.sh`
   - `dev_doctor.sh` — статус/порты/маунты/DB
+  - `autofix_smoke.sh` — автопилот smoke + лог + классификация ошибок
   - `dev_reset.sh` — опасный сброс локальных данных (требует `DEV_RESET_I_UNDERSTAND=YES`)
 - Data dirs (host):
   - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user`
   - `/home/ontoslive/ontos_data/openwebui-data` → `/app/backend/data`
+
+## Autopilot modes (`scripts/autofix_smoke.sh`)
+- Safe mode (default):
+  - Runs `dev_up.sh` with `DEV_PROFILE=minimal`, then `dev_doctor.sh`, then `smoke_ontogit.sh`.
+  - Captures output to `ops/logs/autofix_<ts>.log`.
+  - Does not edit files.
+  - Prints one-line result: `OK (smoke passed)` or `FAIL (smoke failed; see <log path>)`.
+- Apply mode (`APPLY=YES`):
+  - Max `MAX_ITERS=2`.
+  - Allowed edits only:
+    - `smoke_ontogit.sh` stability adjustments (`wait_for_health`/timeouts/env-file handling).
+    - `docker-compose.yml` memory-service env pass-through for `ONTOGIT_*` limits.
+    - sudo-docker strategy fixes (`sudo -E docker`).
+  - Forbidden: touch `.env.local`, run `dev_reset`, run `rm -rf`, generate/replace secrets.
 
 ## Dev profiles
 - `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.

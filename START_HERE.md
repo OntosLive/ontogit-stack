@@ -10,6 +10,7 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 - `scripts/dev_doctor.sh`
 - `scripts/smoke_ontogit.sh`
 - `scripts/autofix_smoke.sh`
+- `scripts/autofix_smoke_v2.sh`
 - `scripts/guard_headers.sh`
 
 ## Invariants (non‑negotiable)
@@ -49,7 +50,10 @@ AUTO_ROLLBACK=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke
 ```
 - v2 always creates a local checkpoint before any auto-edit and prints `BOOT_POINTER=...`.
 - Checkpoints live at `/home/ontoslive/ontogit/ops/state/<ts>-checkpoint`.
+- Current stable pointer file: `/home/ontoslive/ontogit/ops/state/LATEST_POINTER.txt`.
+- One-liner to read pointer: `cat /home/ontoslive/ontogit/ops/state/LATEST_POINTER.txt`
 - If failures persist, v2 can auto-rollback to the printed BOOT_POINTER (`AUTO_ROLLBACK=YES`).
+- Git hygiene choice: `LATEST_POINTER.txt` is generated at runtime and ignored from git.
 
 ## Local data dirs
 - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user` (usage.db)
