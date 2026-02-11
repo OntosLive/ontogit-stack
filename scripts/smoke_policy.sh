@@ -109,7 +109,7 @@ assert_limits() {
   local want_limit="$3"
   local out_file="${TMP_DIR}/limits_${user_id}.json"
   curl -s "http://127.0.0.1:8091/limits/${user_id}" > "${out_file}"
-python - "$out_file" "$want_role" "$want_limit" <<'PY'
+python3 - "$out_file" "$want_role" "$want_limit" <<'PY'
 import json, sys
 p, want_role, want_limit = sys.argv[1:4]
 d = json.load(open(p, encoding='utf-8'))
