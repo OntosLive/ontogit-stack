@@ -15,7 +15,15 @@ if ! docker ps >/dev/null 2>&1; then
   fi
 fi
 
+if [ -f "${STACK_DIR}/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${STACK_DIR}/.env.local"
+  set +a
+fi
+
 cd "${WEBUI_DIR}"
 $DOCKER_CMD compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --force-recreate open-webui
 
 "${STACK_DIR}/scripts/ow_whereami.sh"
+echo "OpenWebUI URL: http://127.0.0.1:3000"

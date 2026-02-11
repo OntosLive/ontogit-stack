@@ -34,6 +34,13 @@ if [ ! -L "${VPS_CURRENT_LINK}" ]; then
   exit 1
 fi
 
+if [ -f "${STACK_DIR}/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${STACK_DIR}/.env.local"
+  set +a
+fi
+
 cat > "${VPS_OVERRIDE_FILE}" <<EOF
 services:
   open-webui:

@@ -3,6 +3,7 @@ set -euo pipefail
 
 LOCAL_PATH="/home/ontoslive/ontos_data/openwebui-data"
 VPS_LINK_PATH="/home/ontoslive/ontos_data/openwebui-data-vps-current"
+STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -16,6 +17,13 @@ fi
 
 echo "time: $(date -Iseconds)"
 echo "host: $(hostname)"
+SECRET_STATUS="missing"
+if [ -n "${ONTOS_SERVICE_AUTH_SECRET:-}" ]; then
+  SECRET_STATUS="present"
+elif [ -f "${STACK_DIR}/.env.local" ] && rg -q '^ONTOS_SERVICE_AUTH_SECRET=\S' "${STACK_DIR}/.env.local"; then
+  SECRET_STATUS="present"
+fi
+echo "service_auth_secret: ${SECRET_STATUS}"
 
 PS_LINE="$($DOCKER_CMD ps --filter name='^open-webui$' --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' | head -n1 || true)"
 if [ -z "${PS_LINE}" ]; then
