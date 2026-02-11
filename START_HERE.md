@@ -9,6 +9,7 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 - `scripts/dev_up.sh`
 - `scripts/dev_doctor.sh`
 - `scripts/smoke_ontogit.sh`
+- `scripts/autofix_smoke.sh`
 - `scripts/guard_headers.sh`
 
 ## Invariants (non‑negotiable)
@@ -33,6 +34,22 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 /home/ontoslive/ontos_work/ontogit-stack/scripts/smoke_ontogit.sh
  /home/ontoslive/ontos_work/ontogit-stack/scripts/guard_headers.sh
 ```
+
+## Autopilot: scripts/autofix_smoke.sh
+```bash
+/home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke.sh
+```
+- Default (safe): runs `dev_up.sh` (minimal) -> `dev_doctor.sh` -> `smoke_ontogit.sh`, writes `ops/logs/autofix_<ts>.log`, does not edit files.
+- Optional apply mode (whitelist only): `APPLY=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke.sh`
+
+## Autopilot v2 (savepoint + rollback)
+```bash
+/home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke_v2.sh
+AUTO_ROLLBACK=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke_v2.sh
+```
+- v2 always creates a local checkpoint before any auto-edit and prints `BOOT_POINTER=...`.
+- Checkpoints live at `/home/ontoslive/ontogit/ops/state/<ts>-checkpoint`.
+- If failures persist, v2 can auto-rollback to the printed BOOT_POINTER (`AUTO_ROLLBACK=YES`).
 
 ## Local data dirs
 - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user` (usage.db)
