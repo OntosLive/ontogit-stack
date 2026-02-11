@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from app.recall_mvp import embed_and_upsert_scene, recall_hits
 from app.prefs_mvp import router as prefs_router  # ONTOS_PREFS_V1
+from common.policy import load_policy, get_user_role, get_daily_limits
 
 # uvicorn запускает: app.main:app
 app = FastAPI(title="ontogit-memory-service")
@@ -41,6 +42,7 @@ from .ontogit_constants import (
 
 SERVICE_AUTH_SECRET = os.environ.get(SERVICE_AUTH_ENV, "")
 USAGE_DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
+POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
 _WARNED_MISSING_USER = False
 _WARNED_MISSING_SECRET = False
 _WARNED_BAD_SERVICE_AUTH = False
@@ -131,20 +133,47 @@ def _get_daily_usage(con: sqlite3.Connection, user_id: str) -> tuple[int, int]:
 
 
 def _check_limits(user_id: str, tokens_in: int, tokens_out: int) -> tuple[bool, str]:
-    if DAILY_REQUEST_LIMIT <= 0 and DAILY_TOKEN_LIMIT <= 0:
+    policy = load_policy(POLICY_PATH)
+    request_limit = DAILY_REQUEST_LIMIT
+    token_limit = DAILY_TOKEN_LIMIT
+    admin_users = set(ADMIN_USERS)
+
+    if policy:
+        admin_users |= set(policy.get("admin_users") or set())
+        assigned_role = _get_assigned_role(user_id, policy.get("default_role") or "basic")
+        role = get_user_role(user_id, policy, assigned_role=assigned_role)
+        req_limit, tok_limit = get_daily_limits(role, policy)
+        request_limit = int(req_limit or 0)
+        token_limit = int(tok_limit or 0)
+
+    if request_limit <= 0 and token_limit <= 0:
         return False, ""
-    if user_id in ADMIN_USERS:
+    if user_id in admin_users:
         return False, "admin_bypass"
     con = sqlite3.connect(USAGE_DB)
     reqs, toks = _get_daily_usage(con, user_id)
     con.close()
     reqs_next = reqs + 1
     toks_next = toks + max(0, int(tokens_in)) + max(0, int(tokens_out))
-    if DAILY_REQUEST_LIMIT > 0 and reqs_next > DAILY_REQUEST_LIMIT:
+    if request_limit > 0 and reqs_next > request_limit:
         return True, "request_limit"
-    if DAILY_TOKEN_LIMIT > 0 and toks_next > DAILY_TOKEN_LIMIT:
+    if token_limit > 0 and toks_next > token_limit:
         return True, "token_limit"
     return False, ""
+
+
+def _get_assigned_role(user_id: str, default_role: str) -> str:
+    try:
+        con = sqlite3.connect(USAGE_DB)
+        cur = con.cursor()
+        cur.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        con.close()
+        if row and row[0]:
+            return str(row[0])
+    except Exception:
+        pass
+    return str(default_role or "basic")
 
 
 def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: int | None = None, tokens_out: int | None = None):

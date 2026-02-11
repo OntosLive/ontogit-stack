@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Request
 from datetime import datetime, timezone
 import sqlite3, time, json, os
+from common.policy import load_policy, get_user_role, get_monthly_limits
 
 DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
+POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
 DEFAULT_ROLE = os.environ.get("DEFAULT_ROLE", "default")
 DEFAULT_LIMIT_USD = float(os.environ.get("DEFAULT_LIMIT_USD", "15"))
 DEFAULT_WARN_70 = float(os.environ.get("DEFAULT_WARN_70", "0.7"))
@@ -165,6 +167,18 @@ def _get_role(con: sqlite3.Connection, role: str) -> tuple[float, float, float]:
     return DEFAULT_LIMIT_USD, DEFAULT_WARN_70, DEFAULT_WARN_90
 
 
+def _get_limits_for_user(con: sqlite3.Connection, user_id: str) -> tuple[str, int, float, float, float]:
+    role, active = _ensure_user(con, user_id)
+    policy = load_policy(POLICY_PATH)
+    if not policy:
+        limit_usd, warn_70, warn_90 = _get_role(con, role)
+        return role, active, limit_usd, warn_70, warn_90
+
+    resolved_role = get_user_role(user_id, policy, assigned_role=role)
+    limit_usd, warn_70, warn_90 = get_monthly_limits(resolved_role, policy)
+    return resolved_role, active, float(limit_usd or 0.0), float(warn_70), float(warn_90)
+
+
 @app.get("/used/{user_id}")
 async def used(user_id: str):
     con = sqlite3.connect(DB)
@@ -176,8 +190,7 @@ async def used(user_id: str):
 @app.get("/limits/{user_id}")
 async def limits(user_id: str):
     con = sqlite3.connect(DB)
-    role, active = _ensure_user(con, user_id)
-    limit_usd, warn_70, warn_90 = _get_role(con, role)
+    role, active, limit_usd, warn_70, warn_90 = _get_limits_for_user(con, user_id)
     con.close()
     return {
         "user_id": user_id,

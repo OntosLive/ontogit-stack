@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, Response
 import httpx, os, json, time
+from common.policy import load_policy, get_user_role
 
 OPENAI_BASE = os.environ.get("OPENAI_BASE", "https://api.openai.com")
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
@@ -12,6 +13,7 @@ USAGE_WRITER_BASE = os.environ.get("USAGE_WRITER_BASE", "http://usage-writer:809
 USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
 USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limits")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
+POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
 
 app = FastAPI()
 
@@ -57,14 +59,17 @@ async def get_limits(user_id: str) -> dict | None:
     return None
 
 
-def _limit_headers(user_id: str, used: float | None, limit: float, warn_level: str) -> dict:
+def _limit_headers(user_id: str, used: float | None, limit: float, warn_level: str, role: str | None = None) -> dict:
     used_val = float(used or 0.0)
-    return {
+    headers = {
         "X-Ontogit-User": user_id or "",
         "X-Ontogit-Used-USD": f"{used_val:.6f}",
         "X-Ontogit-Limit-USD": f"{limit:.6f}",
         "X-Ontogit-Warn": warn_level,
     }
+    if role:
+        headers["X-Ontogit-Role"] = role
+    return headers
 
 
 def _resolve_user_id(req: Request) -> str | None:
@@ -124,7 +129,13 @@ async def proxy(path: str, req: Request):
         elif used >= limit_usd * warn_70:
             warn_level = "monthly:70"
 
-    limit_headers = _limit_headers(user_id, used, limit_usd, warn_level)
+    policy = load_policy(POLICY_PATH)
+    role_header = None
+    if policy and user_id:
+        assigned_role = str((limits or {}).get("role") or "")
+        role_header = get_user_role(user_id, policy, assigned_role=assigned_role)
+
+    limit_headers = _limit_headers(user_id, used, limit_usd, warn_level, role=role_header)
 
     # block only /v1/chat/completions when over limit
     if req.method.upper() == "POST" and path == "v1/chat/completions" and user_id:
