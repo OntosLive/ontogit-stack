@@ -140,14 +140,32 @@ if used_v < limit:
 PY
 
 echo "==> verify hard enforcement blocks before model forwarding"
-CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 25 --retry-delay 1 --retry-connrefused --max-time 5 \
+HDR="${TMP_DIR}/hard_gate.headers"
+BODY="${TMP_DIR}/hard_gate.body"
+curl -sS -D "${HDR}" -o "${BODY}" --retry 25 --retry-delay 1 --retry-connrefused --max-time 5 \
   -H "Content-Type: application/json" \
   -H "X-OpenWebUI-User-Id: ${TEST_USER}" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"smoke hard gate"}]}' \
-  "http://127.0.0.1:${HI_PORT}/v1/chat/completions")"
+  "http://127.0.0.1:${HI_PORT}/v1/chat/completions" >/dev/null 2>&1 || true
+CODE="$(awk 'BEGIN{c=""} /^HTTP\/1/{c=$2} END{print c}' "${HDR}" 2>/dev/null || true)"
+
+if [ -z "${CODE}" ]; then
+  echo "FAIL: unable to parse HTTP code from hard gate response"
+  echo "--- headers (first 30 lines) ---"
+  sed -n '1,30p' "${HDR}" 2>/dev/null || true
+  echo "--- body (first 300 chars) ---"
+  head -c 300 "${BODY}" 2>/dev/null || true
+  echo
+  exit 1
+fi
 
 if [ "${CODE}" != "429" ]; then
   echo "FAIL: expected 429 from header-injector hard gate, got ${CODE}"
+  echo "--- headers (first 30 lines) ---"
+  sed -n '1,30p' "${HDR}" 2>/dev/null || true
+  echo "--- body (first 300 chars) ---"
+  head -c 300 "${BODY}" 2>/dev/null || true
+  echo
   exit 1
 fi
 
