@@ -85,8 +85,18 @@ export ONTOGIT_LIMIT_MODE=hard
 export ONTOGIT_ADMIN_USERS=admin
 
 echo "==> recreate memory-service with hard limits"
-(cd "$STACK_DIR" && $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
+(cd "$STACK_DIR" && ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=hard $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
 wait_for_health
+
+mem_id="$($DOCKER_CMD ps --format '{{.ID}} {{.Names}}' | rg -i 'memory-service' | head -n1 | awk '{print $1}')"
+if [ -z "$mem_id" ]; then
+  echo "memory-service container not found"
+  exit 1
+fi
+if ! $DOCKER_CMD exec "$mem_id" env | rg -q '^ONTOGIT_DAILY_REQUEST_LIMIT=1$'; then
+  echo "memory-service missing ONTOGIT_DAILY_REQUEST_LIMIT=1 after recreate"
+  exit 1
+fi
 
 echo "==> clear today's usage for user1/admin"
 today_start="$(date -u +"%s" -d "$(date -u +%Y-%m-%d) 00:00:00")"
@@ -129,7 +139,7 @@ echo "==> restore normal mode (no limits)"
 unset ONTOGIT_DAILY_REQUEST_LIMIT
 unset ONTOGIT_LIMIT_MODE
 unset ONTOGIT_ADMIN_USERS
-(cd "$STACK_DIR" && $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
+(cd "$STACK_DIR" && ONTOGIT_DAILY_REQUEST_LIMIT= ONTOGIT_LIMIT_MODE= ONTOGIT_ADMIN_USERS= $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service)
 wait_for_health
 
 echo "==> last 5 usage events"
