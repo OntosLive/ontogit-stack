@@ -11,7 +11,7 @@ services:
     command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
       --port 8089 --access-log"
     ports:
-    - 8089:8089
+    - 127.0.0.1:8089:8089
     restart: unless-stopped
     environment:
       OPENAI_PROXY_URL: ${OPENAI_PROXY_URL:-http://openai-proxy:8088}

@@ -4,6 +4,7 @@ set -euo pipefail
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 TMP_DIR="/tmp/ontogit_smoke_enforcement_hard"
+HI_PORT="${HI_PORT:-8089}"
 mkdir -p "${TMP_DIR}"
 
 DOCKER_CMD="docker"
@@ -94,7 +95,7 @@ wait_header_injector_ready() {
   local code
   start="$(date +%s)"
   while true; do
-    code="$(curl -sS --retry 50 --retry-delay 1 --retry-connrefused --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8089/openapi.json" 2>/dev/null || true)"
+    code="$(curl -sS --retry 50 --retry-delay 1 --retry-connrefused --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HI_PORT}/openapi.json" 2>/dev/null || true)"
     if [ "${code}" != "000" ]; then
       return 0
     fi
@@ -143,7 +144,7 @@ CODE="$(curl -sS -o /dev/null -w '%{http_code}' --retry 25 --retry-delay 1 --ret
   -H "Content-Type: application/json" \
   -H "X-OpenWebUI-User-Id: ${TEST_USER}" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"smoke hard gate"}]}' \
-  "http://127.0.0.1:8089/v1/chat/completions")"
+  "http://127.0.0.1:${HI_PORT}/v1/chat/completions")"
 
 if [ "${CODE}" != "429" ]; then
   echo "FAIL: expected 429 from header-injector hard gate, got ${CODE}"
