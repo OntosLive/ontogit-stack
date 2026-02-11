@@ -5,11 +5,10 @@ OPENAI_BASE = os.environ.get("OPENAI_BASE", "https://api.openai.com")
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
 DEFAULT_USER_ID = os.environ.get("DEFAULT_USER_ID", "")
 USAGE_WRITER_URL = os.environ.get("USAGE_WRITER_URL", "http://usage-writer:8091/usage")
-USAGE_SUM_URL = os.environ.get("USAGE_SUM_URL", "http://usage-writer:8091/sum_usd")
+USAGE_WRITER_BASE = os.environ.get("USAGE_WRITER_BASE", "http://usage-writer:8091")
+USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
+USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limits")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
-LIMIT_BLOCK = float(os.environ.get("MONTHLY_LIMIT_USD", "15.0"))
-WARN_70 = float(os.environ.get("WARN_70", "0.7"))
-WARN_90 = float(os.environ.get("WARN_90", "0.9"))
 
 app = FastAPI()
 
@@ -29,35 +28,39 @@ async def post_usage(event: dict):
     except Exception:
         pass
 
-async def get_monthly_sum(user_id: str) -> float | None:
+async def get_used(user_id: str) -> float | None:
     if not user_id:
         return None
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
-            r = await c.get(USAGE_SUM_URL, params={"user_id": user_id})
+            r = await c.get(f"{USAGE_USED_URL}/{user_id}")
             if r.status_code == 200:
                 data = r.json()
-                return float(data.get("sum_usd") or 0.0)
+                return float(data.get("used_usd") or 0.0)
     except Exception:
         pass
     return None
 
-def _limit_headers(used: float | None, limit: float) -> dict:
+async def get_limits(user_id: str) -> dict | None:
+    if not user_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(f"{USAGE_LIMITS_URL}/{user_id}")
+            if r.status_code == 200:
+                return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def _limit_headers(user_id: str, used: float | None, limit: float, warn_level: str) -> dict:
     used_val = float(used or 0.0)
-    warn70 = limit * WARN_70
-    warn90 = limit * WARN_90
-    warn = "none"
-    if used is not None:
-        if used_val >= warn90:
-            warn = "monthly:90"
-        elif used_val >= warn70:
-            warn = "monthly:70"
-    block = "monthly_limit" if used is not None and used_val >= limit else "none"
     return {
-        "X-Ontogit-Used-Usd": f"{used_val:.6f}",
-        "X-Ontogit-Limit-Usd": f"{limit:.6f}",
-        "X-Ontogit-Warn": warn,
-        "X-Ontogit-Block": block,
+        "X-Ontogit-User": user_id or "",
+        "X-Ontogit-Used-USD": f"{used_val:.6f}",
+        "X-Ontogit-Limit-USD": f"{limit:.6f}",
+        "X-Ontogit-Warn": warn_level,
     }
 
 @app.api_route("/{path:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
@@ -92,14 +95,26 @@ async def proxy(path: str, req: Request):
             pass
 
     user_id = _pick_first_header(req, ["x-ontogit-user","x-openwebui-user-id","x-user-id","x-webui-user-id","x-forwarded-user","x-auth-user"]) or DEFAULT_USER_ID or "unknown"
-    used = await get_monthly_sum(user_id) if user_id else None
-    limit_headers = _limit_headers(used, LIMIT_BLOCK)
+    used = await get_used(user_id) if user_id else None
+    limits = await get_limits(user_id) if user_id else None
+    limit_usd = float((limits or {}).get("limit_usd") or 0.0)
+    warn_70 = float((limits or {}).get("warn_70") or 0.7)
+    warn_90 = float((limits or {}).get("warn_90") or 0.9)
+
+    warn_level = "none"
+    if limit_usd > 0 and used is not None:
+        if used >= limit_usd * warn_90:
+            warn_level = "monthly:90"
+        elif used >= limit_usd * warn_70:
+            warn_level = "monthly:70"
+
+    limit_headers = _limit_headers(user_id, used, limit_usd, warn_level)
 
     # block only /v1/chat/completions when over limit
     if req.method.upper() == "POST" and path == "v1/chat/completions" and user_id:
-        if used is not None and used >= LIMIT_BLOCK:
+        if limit_usd > 0 and used is not None and used >= limit_usd:
             return Response(
-                content=json.dumps({"error": {"message": "monthly limit reached", "type": "rate_limit"}}),
+                content=json.dumps({"error": "limit_exceeded", "user_id": user_id, "used_usd": float(used or 0.0), "limit_usd": limit_usd}),
                 status_code=429,
                 media_type="application/json",
                 headers=limit_headers,
@@ -126,12 +141,6 @@ async def proxy(path: str, req: Request):
                 ct2 = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
                 tt = int(usage.get("total_tokens") or (pt + ct2))
                 model = resp_json.get("model") or "unknown"
-                warn = None
-                if used is not None:
-                    if used >= LIMIT_BLOCK * WARN_90:
-                        warn = "monthly:90"
-                    elif used >= LIMIT_BLOCK * WARN_70:
-                        warn = "monthly:70"
                 event = {
                     "ts": int(time.time()),
                     "user_id": user_id,
@@ -142,8 +151,6 @@ async def proxy(path: str, req: Request):
                     "total_tokens": tt,
                     "cost_usd": (pt/1000.0)*0.0025 + (ct2/1000.0)*0.01,
                 }
-                if warn:
-                    event["limit_warn"] = warn
                 await post_usage(event)
         except Exception:
             pass

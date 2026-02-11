@@ -29,6 +29,7 @@ services:
     environment:
     - OPENAI_BASE=https://api.openai.com
     - USAGE_WRITER_URL=http://usage-writer:8091/usage
+    - USAGE_WRITER_BASE=http://usage-writer:8091
     - FORCE_NON_STREAM=1
     command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
       --port 8088 --access-log"
@@ -43,6 +44,11 @@ services:
     - ./openwebui-data:/ontogit_user
     environment:
     - USAGE_DB=/ontogit_user/usage.db
+    - DEFAULT_LIMIT_USD=${DEFAULT_LIMIT_USD:-15}
+    - DEFAULT_WARN_70=${DEFAULT_WARN_70:-0.7}
+    - DEFAULT_WARN_90=${DEFAULT_WARN_90:-0.9}
+    - ROLE_LOW_LIMIT_USD=${ROLE_LOW_LIMIT_USD:-5}
+    - ROLE_HIGH_LIMIT_USD=${ROLE_HIGH_LIMIT_USD:-50}
     command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
       --port 8091"
     ports:
