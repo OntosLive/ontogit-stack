@@ -9,6 +9,30 @@ fi
 
 BASE_URL="http://127.0.0.1:8090"
 DB_PATH="./openwebui-data/usage.db"
+STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
+
+DOCKER_CMD="docker"
+if ! docker ps >/dev/null 2>&1; then
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -n docker"
+  fi
+fi
+
+wait_for_health() {
+  local start
+  start="$(date +%s)"
+  while true; do
+    code="$(curl -s -m 2 -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)"
+    if [ "$code" = "200" ] || [ "$code" = "401" ]; then
+      return 0
+    fi
+    if [ $(( $(date +%s) - start )) -ge 15 ]; then
+      echo "Timeout waiting for memory-service health"
+      return 1
+    fi
+    sleep 1
+  done
+}
 
 echo "==> /health without service-auth should be 401"
 code="$(curl -s -o /tmp/health_noauth.json -w "%{http_code}" "$BASE_URL/health")"
@@ -47,6 +71,14 @@ export ONTOGIT_DAILY_REQUEST_LIMIT=1
 export ONTOGIT_LIMIT_MODE=hard
 export ONTOGIT_ADMIN_USERS=admin
 
+echo "==> recreate memory-service with hard limits"
+(cd "$STACK_DIR" && $DOCKER_CMD compose up -d --force-recreate memory-service)
+wait_for_health
+
+echo "==> clear today's usage for user1/admin"
+today_start="$(date -u +"%s" -d "$(date -u +%Y-%m-%d) 00:00:00")"
+sqlite3 "$DB_PATH" "delete from memory_usage_events where user_id in ('user1','admin') and ts >= ${today_start};"
+
 echo "==> non-admin user should hit 429 on second request"
 code="$(curl -s -o /tmp/commit_user1_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: user1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
@@ -74,6 +106,13 @@ if [ "$code" != "200" ]; then
   echo "Expected 200 on /commit for admin second request, got $code"
   exit 1
 fi
+
+echo "==> restore normal mode (no limits)"
+unset ONTOGIT_DAILY_REQUEST_LIMIT
+unset ONTOGIT_LIMIT_MODE
+unset ONTOGIT_ADMIN_USERS
+(cd "$STACK_DIR" && $DOCKER_CMD compose up -d --force-recreate memory-service)
+wait_for_health
 
 echo "==> last 5 usage events"
 sqlite3 "$DB_PATH" "select user_id, endpoint, status_code from memory_usage_events order by id desc limit 5;"
