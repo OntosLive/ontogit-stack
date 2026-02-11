@@ -1,0 +1,26 @@
+version: 1
+admin_users: ["admin", "andrey"]
+default_role: "basic"
+roles:
+  basic:
+    daily:
+      request_limit: 200
+      token_limit: 40000
+    monthly:
+      limit_usd: 10
+      warn_70: 0.7
+      warn_90: 0.9
+  pro:
+    daily:
+      request_limit: 2000
+      token_limit: 400000
+    monthly:
+      limit_usd: 50
+      warn_70: 0.7
+      warn_90: 0.9
+  admin:
+    daily:
+      request_limit: 0
+      token_limit: 0
+    monthly:
+      limit_usd: 0

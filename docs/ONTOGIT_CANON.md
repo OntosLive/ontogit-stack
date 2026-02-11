@@ -66,6 +66,15 @@
 - Лимиты **не заданы** (значит отключены).
 - `ONTOGIT_LIMIT_MODE=soft`.
 
+## Policy-as-code v1 (optional)
+- Runtime path: `/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml` (mounted as `/ontogit_user/onto_policy.yml`).
+- Example template: `policy/onto_policy.example.yml`.
+- If policy file is missing/invalid: behavior stays on existing env defaults (no change).
+- Roles: `basic` / `pro` / `admin`; user role resolves from `users.role` with `default_role` fallback.
+- `admin_users` in policy is an admin override; memory-service uses union of policy + `ONTOGIT_ADMIN_USERS`.
+- Daily limits (memory-service): per-role `request_limit` / `token_limit` (`0` or `null` = unlimited).
+- Monthly limits (usage/openai): per-role `limit_usd`, `warn_70`, `warn_90`.
+
 ### Staging example
 ```
 ONTOGIT_DAILY_REQUEST_LIMIT=100
