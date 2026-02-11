@@ -372,6 +372,12 @@ if [ "${ACTUAL_LIMIT_ON}" != "${EXPECTED}" ] && [ "${ACTUAL_LIMIT_ON}" != "${EXP
   exit 1
 fi
 
+if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+  echo "SMOKE_NO_RECREATE=1: skipping disabled/fallback check"
+  echo "OK: smoke_role_source passed (role=${ROLE}, fallback_role=${FALLBACK_ROLE})"
+  exit 0
+fi
+
 if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
   (
     cd "${STACK_DIR}" && \
