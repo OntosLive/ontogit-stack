@@ -94,11 +94,11 @@ wait_header_injector_ready() {
   local code
   start="$(date +%s)"
   while true; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8089/openapi.json" || true)"
+    code="$(curl -sS --retry 50 --retry-delay 1 --retry-connrefused --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8089/openapi.json" 2>/dev/null || true)"
     if [ "${code}" != "000" ]; then
       return 0
     fi
-    if [ $(( $(date +%s) - start )) -ge 45 ]; then
+    if [ $(( $(date +%s) - start )) -ge 180 ]; then
       echo "Timeout waiting for header-injector readiness"
       return 1
     fi
