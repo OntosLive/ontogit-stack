@@ -71,21 +71,6 @@ ROLE_FETCH_HTTP_CODE=""
 ROLE_FETCH_BODY=""
 ROLE_FETCH_CONTAINER=""
 
-_role_fetch_host() {
-  local role_url="$1"
-  local body_file="${TMP_DIR}/role_fetch_host_body.$$"
-  local code_file="${TMP_DIR}/role_fetch_host_code.$$"
-  local http_code=""
-  curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 \
-    -H "X-Ontos-Service-Auth: ${SERVICE_SECRET}" \
-    -H "X-OpenWebUI-User-Id: ${USER_ID}" \
-    -H "Accept: application/json" \
-    -o "${body_file}" -w "%{http_code}" "${role_url}" > "${code_file}" || true
-  http_code="$(cat "${code_file}" 2>/dev/null || true)"
-  ROLE_FETCH_HTTP_CODE="${http_code}"
-  ROLE_FETCH_BODY="$(cat "${body_file}" 2>/dev/null || true)"
-}
-
 _select_docker_role_fetch_container() {
   local name=""
   name="$($DOCKER_CMD ps --format '{{.Names}}' | awk '$0=="ontogit-stack-usage-writer-1"{print; exit}')"
@@ -149,26 +134,12 @@ PY
 }
 
 get_role_json() {
-  local role_url="${OPENWEBUI_BASE_URL%/}/api/v1/ontogit/user_role"
-  local base_no_proto=""
-  local host_port=""
-  local host=""
-  base_no_proto="${OPENWEBUI_BASE_URL#*://}"
-  host_port="${base_no_proto%%/*}"
-  host="${host_port%%:*}"
+  local role_url="http://open-webui:8080/api/v1/ontogit/user_role"
 
   ROLE_FETCH_METHOD=""
   ROLE_FETCH_HTTP_CODE=""
   ROLE_FETCH_BODY=""
   ROLE_FETCH_CONTAINER=""
-
-  if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
-    _role_fetch_host "${role_url}"
-    ROLE_FETCH_METHOD="host"
-    if [ "${ROLE_FETCH_HTTP_CODE}" = "200" ] && [ -n "${ROLE_FETCH_BODY}" ]; then
-      return 0
-    fi
-  fi
 
   ROLE_FETCH_METHOD="docker"
   _role_fetch_docker "${role_url}"
@@ -208,6 +179,39 @@ if not isinstance(role, str):
     role = ""
 print(f"{role} {limit}")
 PY
+}
+
+has_limit_usd() {
+  local raw="$1"
+  python3 - "${raw}" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    d = json.loads(raw or "{}")
+except Exception:
+    print("0")
+    sys.exit(0)
+print("1" if "limit_usd" in d else "0")
+PY
+}
+
+wait_limits_json() {
+  local user_id="$1"
+  local out=""
+  local ok="0"
+  local i=1
+  while [ "${i}" -le 20 ]; do
+    out="$(curl -sS --retry 2 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${user_id}" || true)"
+    ok="$(has_limit_usd "${out}")"
+    if [ "${ok}" = "1" ]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  printf '%s' "${out}"
+  return 1
 }
 
 if [ -z "${USER_ID}" ] && [ -n "${USER_EMAIL}" ]; then
@@ -330,9 +334,9 @@ curl -sS -X PUT -H 'Content-Type: application/json' \
 )
 
 sleep 3
-LIMITS_ROLE_ON_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${USER_ID}" || true)"
+LIMITS_ROLE_ON_JSON="$(wait_limits_json "${USER_ID}" || true)"
 LIMITS_ROLE_ON="$(parse_limits_line "${LIMITS_ROLE_ON_JSON}")"
-if [ -z "${LIMITS_ROLE_ON}" ]; then
+if [ -z "${LIMITS_ROLE_ON}" ] || [ "$(has_limit_usd "${LIMITS_ROLE_ON_JSON}")" != "1" ]; then
   echo "Failed to parse /limits response with ROLE_SOURCE enabled"
   echo "diag.body_preview=$(printf '%s' "${LIMITS_ROLE_ON_JSON}" | head -c 300)"
   exit 1
@@ -356,9 +360,9 @@ fi
 )
 
 sleep 3
-LIMITS_ROLE_OFF_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${USER_ID}" || true)"
+LIMITS_ROLE_OFF_JSON="$(wait_limits_json "${USER_ID}" || true)"
 LIMITS_ROLE_OFF="$(parse_limits_line "${LIMITS_ROLE_OFF_JSON}")"
-if [ -z "${LIMITS_ROLE_OFF}" ]; then
+if [ -z "${LIMITS_ROLE_OFF}" ] || [ "$(has_limit_usd "${LIMITS_ROLE_OFF_JSON}")" != "1" ]; then
   echo "Failed to parse /limits response with ROLE_SOURCE disabled"
   echo "diag.body_preview=$(printf '%s' "${LIMITS_ROLE_OFF_JSON}" | head -c 300)"
   exit 1
