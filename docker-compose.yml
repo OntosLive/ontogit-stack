@@ -30,6 +30,8 @@ services:
     - USAGE_WRITER_BASE=http://usage-writer:8091
     - FORCE_NON_STREAM=1
     - POLICY_PATH=/ontogit_user/onto_policy.yml
+    - ONTOGIT_ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
+    - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://open-webui:8080}
     - ONTOGIT_DEV_FALLBACK_USER_ID=${ONTOGIT_DEV_FALLBACK_USER_ID:-}
     command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
       --port 8088 --access-log"
@@ -46,6 +48,10 @@ services:
     environment:
     - USAGE_DB=/ontogit_user/usage.db
     - POLICY_PATH=/ontogit_user/onto_policy.yml
+    - ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
+    - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://open-webui:8080}
+    - ONTOGIT_ROLE_ENDPOINT=${ONTOGIT_ROLE_ENDPOINT:-/api/v1/ontogit/user_role}
+    - ONTOS_SERVICE_AUTH_SECRET=${ONTOS_SERVICE_AUTH_SECRET}
     - DEFAULT_LIMIT_USD=${DEFAULT_LIMIT_USD:-15}
     - DEFAULT_WARN_70=${DEFAULT_WARN_70:-0.7}
     - DEFAULT_WARN_90=${DEFAULT_WARN_90:-0.9}
@@ -86,6 +92,7 @@ services:
     - ONTOGIT_DAILY_TOKEN_LIMIT=${ONTOGIT_DAILY_TOKEN_LIMIT-}
     - ONTOGIT_LIMIT_MODE=${ONTOGIT_LIMIT_MODE-soft}
     - ONTOGIT_ADMIN_USERS=${ONTOGIT_ADMIN_USERS-}
+    - ONTOGIT_ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
     - USAGE_DB=/ontogit_user/usage.db
     - POLICY_PATH=/ontogit_user/onto_policy.yml
     - GIT_AUTHOR_NAME=OntoGit

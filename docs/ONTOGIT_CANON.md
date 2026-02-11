@@ -75,6 +75,13 @@
 - Daily limits (memory-service): per-role `request_limit` / `token_limit` (`0` or `null` = unlimited).
 - Monthly limits (usage/openai): per-role `limit_usd`, `warn_70`, `warn_90`.
 
+## Governance v1 (optional, env-gated)
+- OpenWebUI is identity/group source (`user_id` = OpenWebUI `user.id`).
+- OpenWebUI role endpoint: `GET /api/v1/ontogit/user_role` (requires `X-Ontos-Service-Auth` + `X-OpenWebUI-User-Id`).
+- Group mapping defaults: `admin -> admin`, `pro -> pro`, else `basic`.
+- Enable role source in usage-writer with `ONTOGIT_ROLE_SOURCE=openwebui`.
+- If role source is off/unavailable: limits behavior remains unchanged.
+
 ### Staging example
 ```
 ONTOGIT_DAILY_REQUEST_LIMIT=100

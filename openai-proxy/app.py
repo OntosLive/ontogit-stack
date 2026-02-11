@@ -14,6 +14,7 @@ USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
 USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limits")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
 POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
+ROLE_SOURCE = (os.environ.get("ONTOGIT_ROLE_SOURCE", "") or "").strip().lower()
 
 app = FastAPI()
 
@@ -131,7 +132,9 @@ async def proxy(path: str, req: Request):
 
     policy = load_policy(POLICY_PATH)
     role_header = None
-    if policy and user_id:
+    if ROLE_SOURCE == "openwebui" and user_id:
+        role_header = str((limits or {}).get("role") or "").strip() or None
+    elif policy and user_id:
         assigned_role = str((limits or {}).get("role") or "")
         role_header = get_user_role(user_id, policy, assigned_role=assigned_role)
 

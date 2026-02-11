@@ -1,10 +1,16 @@
 from fastapi import FastAPI, Request
 from datetime import datetime, timezone
 import sqlite3, time, json, os
+import urllib.request, urllib.error
 from common.policy import load_policy, get_user_role, get_monthly_limits
 
 DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
 POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
+ROLE_SOURCE = (os.environ.get("ROLE_SOURCE", "") or "").strip().lower()
+OPENWEBUI_BASE_URL = os.environ.get("OPENWEBUI_BASE_URL", "http://open-webui:8080")
+ONTOGIT_ROLE_ENDPOINT = os.environ.get("ONTOGIT_ROLE_ENDPOINT", "/api/v1/ontogit/user_role")
+SERVICE_AUTH_SECRET = os.environ.get("ONTOS_SERVICE_AUTH_SECRET", "")
+ROLE_CACHE_TTL = int(os.environ.get("ONTOGIT_ROLE_CACHE_TTL", "60") or 60)
 DEFAULT_ROLE = os.environ.get("DEFAULT_ROLE", "default")
 DEFAULT_LIMIT_USD = float(os.environ.get("DEFAULT_LIMIT_USD", "15"))
 DEFAULT_WARN_70 = float(os.environ.get("DEFAULT_WARN_70", "0.7"))
@@ -12,6 +18,7 @@ DEFAULT_WARN_90 = float(os.environ.get("DEFAULT_WARN_90", "0.9"))
 ROLE_LOW_LIMIT_USD = float(os.environ.get("ROLE_LOW_LIMIT_USD", "5"))
 ROLE_HIGH_LIMIT_USD = float(os.environ.get("ROLE_HIGH_LIMIT_USD", "50"))
 app = FastAPI()
+ROLE_CACHE: dict[str, tuple[float, str]] = {}
 
 def init_db():
     os.makedirs(os.path.dirname(DB), exist_ok=True)
@@ -174,9 +181,44 @@ def _get_limits_for_user(con: sqlite3.Connection, user_id: str) -> tuple[str, in
         limit_usd, warn_70, warn_90 = _get_role(con, role)
         return role, active, limit_usd, warn_70, warn_90
 
-    resolved_role = get_user_role(user_id, policy, assigned_role=role)
+    role_from_source = _get_role_from_source(user_id)
+    resolved_role = get_user_role(user_id, policy, assigned_role=(role_from_source or role))
     limit_usd, warn_70, warn_90 = get_monthly_limits(resolved_role, policy)
     return resolved_role, active, float(limit_usd or 0.0), float(warn_70), float(warn_90)
+
+
+def _get_role_from_source(user_id: str) -> str | None:
+    if ROLE_SOURCE != "openwebui":
+        return None
+    if not user_id or not SERVICE_AUTH_SECRET:
+        return None
+
+    now = time.time()
+    cached = ROLE_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    url = f"{OPENWEBUI_BASE_URL.rstrip('/')}/{ONTOGIT_ROLE_ENDPOINT.lstrip('/')}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "X-Ontos-Service-Auth": SERVICE_AUTH_SECRET,
+            "X-OpenWebUI-User-Id": user_id,
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            if getattr(resp, "status", 200) != 200:
+                return None
+            data = json.loads(resp.read().decode("utf-8"))
+            role = str((data or {}).get("role") or "").strip()
+            if not role:
+                return None
+            ROLE_CACHE[user_id] = (now + max(1, ROLE_CACHE_TTL), role)
+            return role
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return None
 
 
 @app.get("/used/{user_id}")

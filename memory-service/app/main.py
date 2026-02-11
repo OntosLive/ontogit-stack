@@ -43,6 +43,7 @@ from .ontogit_constants import (
 SERVICE_AUTH_SECRET = os.environ.get(SERVICE_AUTH_ENV, "")
 USAGE_DB = os.environ.get("USAGE_DB", "/ontogit_user/usage.db")
 POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
+ROLE_SOURCE = (os.environ.get("ONTOGIT_ROLE_SOURCE", "") or "").strip().lower()
 _WARNED_MISSING_USER = False
 _WARNED_MISSING_SECRET = False
 _WARNED_BAD_SERVICE_AUTH = False
@@ -132,19 +133,30 @@ def _get_daily_usage(con: sqlite3.Connection, user_id: str) -> tuple[int, int]:
     return reqs, toks
 
 
-def _check_limits(user_id: str, tokens_in: int, tokens_out: int) -> tuple[bool, str]:
-    policy = load_policy(POLICY_PATH)
+def _check_limits(user_id: str, tokens_in: int, tokens_out: int, role_hint: str | None = None) -> tuple[bool, str]:
     request_limit = DAILY_REQUEST_LIMIT
     token_limit = DAILY_TOKEN_LIMIT
     admin_users = set(ADMIN_USERS)
 
-    if policy:
-        admin_users |= set(policy.get("admin_users") or set())
-        assigned_role = _get_assigned_role(user_id, policy.get("default_role") or "basic")
-        role = get_user_role(user_id, policy, assigned_role=assigned_role)
-        req_limit, tok_limit = get_daily_limits(role, policy)
-        request_limit = int(req_limit or 0)
-        token_limit = int(tok_limit or 0)
+    role_hint = (role_hint or "").strip().lower()
+    if ROLE_SOURCE == "openwebui":
+        if role_hint:
+            policy = load_policy(POLICY_PATH)
+            if policy:
+                admin_users |= set(policy.get("admin_users") or set())
+                role = get_user_role(user_id, policy, assigned_role=role_hint)
+                req_limit, tok_limit = get_daily_limits(role, policy)
+                request_limit = int(req_limit or 0)
+                token_limit = int(tok_limit or 0)
+    else:
+        policy = load_policy(POLICY_PATH)
+        if policy:
+            admin_users |= set(policy.get("admin_users") or set())
+            assigned_role = _get_assigned_role(user_id, policy.get("default_role") or "basic")
+            role = get_user_role(user_id, policy, assigned_role=assigned_role)
+            req_limit, tok_limit = get_daily_limits(role, policy)
+            request_limit = int(req_limit or 0)
+            token_limit = int(tok_limit or 0)
 
     if request_limit <= 0 and token_limit <= 0:
         return False, ""
@@ -160,20 +172,6 @@ def _check_limits(user_id: str, tokens_in: int, tokens_out: int) -> tuple[bool, 
     if token_limit > 0 and toks_next > token_limit:
         return True, "token_limit"
     return False, ""
-
-
-def _get_assigned_role(user_id: str, default_role: str) -> str:
-    try:
-        con = sqlite3.connect(USAGE_DB)
-        cur = con.cursor()
-        cur.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
-        row = cur.fetchone()
-        con.close()
-        if row and row[0]:
-            return str(row[0])
-    except Exception:
-        pass
-    return str(default_role or "basic")
 
 
 def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: int | None = None, tokens_out: int | None = None):
@@ -197,6 +195,20 @@ def _record_usage(request: Request, endpoint: str, status_code: int, tokens_in: 
     )
     con.commit()
     con.close()
+
+
+def _get_assigned_role(user_id: str, default_role: str) -> str:
+    try:
+        con = sqlite3.connect(USAGE_DB)
+        cur = con.cursor()
+        cur.execute("SELECT role FROM users WHERE user_id = ?", (user_id,))
+        row = cur.fetchone()
+        con.close()
+        if row and row[0]:
+            return str(row[0])
+    except Exception:
+        pass
+    return str(default_role or "basic")
 
 
 def _get_user_id(request: Request) -> str:
@@ -369,7 +381,8 @@ async def recall(req: RecallReq, request: Request, response: Response):
     q = (req.query or '').strip()
     user_id = _get_user_id(request)
     tokens_in = _count_tokens(req.query or "")
-    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0)
+    role_hint = (request.headers.get("X-Ontogit-Role") or "").strip()
+    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0, role_hint=role_hint)
     if limit_exceeded and LIMIT_MODE == "hard":
         _record_usage(request, "recall", 429, tokens_in=tokens_in, tokens_out=0)
         return Response(content='{"error":"quota_exceeded"}', status_code=429, media_type="application/json")
@@ -421,7 +434,8 @@ async def commit(req: CommitReq, request: Request, response: Response):
     status_code = 200
     user_id = _get_user_id(request)
     tokens_in = _count_tokens(req.body or "")
-    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0)
+    role_hint = (request.headers.get("X-Ontogit-Role") or "").strip()
+    limit_exceeded, _ = _check_limits(user_id, tokens_in, 0, role_hint=role_hint)
     if limit_exceeded and LIMIT_MODE == "hard":
         _record_usage(request, "commit", 429, tokens_in=tokens_in, tokens_out=0)
         return Response(content='{"error":"quota_exceeded"}', status_code=429, media_type="application/json")
