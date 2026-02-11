@@ -3,6 +3,15 @@ set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
+PROFILE="${DEV_PROFILE:-minimal}"
+BUILD="${DEV_BUILD:-0}"
+
+DOCKER_CMD="docker"
+if ! docker ps >/dev/null 2>&1; then
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER_CMD="sudo -n docker"
+  fi
+fi
 
 if [ -f "${STACK_DIR}/.env.local" ]; then
   set -a
@@ -17,7 +26,27 @@ if [ -f "${WEBUI_DIR}/.env.local" ]; then
   set +a
 fi
 
-(cd "$STACK_DIR" && docker compose up -d --build)
-(cd "$WEBUI_DIR" && docker compose up -d --build)
+PROFILE_FILE="/tmp/ontogit_dev_profile"
+BUILD_FILE="/tmp/ontogit_dev_build"
+echo "$PROFILE" > "$PROFILE_FILE"
+echo "$BUILD" > "$BUILD_FILE"
+
+STACK_ARGS=()
+WEBUI_ARGS=()
+if [ "$PROFILE" = "full" ]; then
+  STACK_ARGS+=(--profile full)
+  WEBUI_ARGS+=(--profile full)
+fi
+
+if [ "$BUILD" = "1" ]; then
+  STACK_BUILD_ARGS=(--build)
+  WEBUI_BUILD_ARGS=(--build)
+else
+  STACK_BUILD_ARGS=()
+  WEBUI_BUILD_ARGS=()
+fi
+
+(cd "$STACK_DIR" && $DOCKER_CMD compose up -d "${STACK_BUILD_ARGS[@]}" "${STACK_ARGS[@]}")
+(cd "$WEBUI_DIR" && $DOCKER_CMD compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d --pull always "${WEBUI_BUILD_ARGS[@]}" "${WEBUI_ARGS[@]}")
 
 "${STACK_DIR}/scripts/dev_doctor.sh"

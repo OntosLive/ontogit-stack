@@ -87,3 +87,7 @@ ONTOGIT_ADMIN_USERS=admin,admin2
 - Data dirs (host):
   - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user`
   - `/home/ontoslive/ontos_data/openwebui-data` → `/app/backend/data`
+
+## Dev profiles
+- `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.
+- `DEV_PROFILE=full`: includes ollama, optional build with `DEV_BUILD=1`.

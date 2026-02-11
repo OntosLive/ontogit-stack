@@ -90,6 +90,15 @@ secret_present="FAIL"
 if [ -f "${STACK_DIR}/.env.local" ] && rg -q "^ONTOS_SERVICE_AUTH_SECRET=\\S" "${STACK_DIR}/.env.local"; then secret_present="OK"; fi
 usage_db_present="FAIL"
 if [ -f "${DATA_ONTOS_USER}/usage.db" ]; then usage_db_present="OK"; fi
+profile="$(cat /tmp/ontogit_dev_profile 2>/dev/null || echo "${DEV_PROFILE:-minimal}")"
+build_used="$(cat /tmp/ontogit_dev_build 2>/dev/null || echo "${DEV_BUILD:-0}")"
+ollama_running="no"
+if $DOCKER_CMD ps --format '{{.Names}}' | rg -q "^ollama$"; then ollama_running="yes"; fi
+build_label="no"
+if [ "$build_used" = "1" ]; then build_label="yes"; fi
 echo "mounts: ${ok_mounts}"
 echo "secret in ${STACK_DIR}/.env.local: ${secret_present}"
 echo "usage.db: ${usage_db_present}"
+echo "profile: ${profile}"
+echo "ollama running: ${ollama_running}"
+echo "build used: ${build_label}"

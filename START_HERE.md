@@ -45,3 +45,7 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 
 ## Docker access note
 If Docker requires sudo in this environment, run scripts with `sudo` (or they will auto-detect and use `sudo` for read-only docker commands where possible).
+
+## Dev profiles
+- `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.
+- `DEV_PROFILE=full`: includes ollama (and allows build if `DEV_BUILD=1`).
