@@ -111,7 +111,7 @@ _role_fetch_docker() {
     -e ONTOS_SERVICE_AUTH_SECRET="${SERVICE_SECRET}" \
     -e USER_ID="${USER_ID}" \
     "${container_name}" \
-    python3 - <<'PY'
+    python3 - <<'PY' > "${body_file}" 2> "${err_file}" || rc=$?
 import os, urllib.request, sys
 url = os.environ["ROLE_URL"]
 req = urllib.request.Request(url, headers={
@@ -126,7 +126,6 @@ except Exception:
   print("", end="")
   sys.exit(2)
 PY
-  > "${body_file}" 2> "${err_file}" || rc=$?
   if [ "${rc}" -ne 0 ]; then
     ROLE_FETCH_BODY=""
     ROLE_FETCH_HTTP_CODE="docker_exec_${rc}"
