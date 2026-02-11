@@ -35,6 +35,16 @@
 - D) Change limits: edit policy file -> recreate `usage-writer` -> run smoke.
 - E) Break-glass admin: set `admin_users` UUID list in policy -> recreate `usage-writer` -> run smoke.
 
+## Precedence Test
+- Use `test@test.ru` for precedence verification.
+- Put this user in BOTH groups: `role:admin` and `role:pro`.
+- Expected resolved role is `admin` (admin > pro > basic).
+- Command: `USER_EMAIL=test@test.ru ./scripts/smoke_role_source.sh`
+
+## Admin Migration Note
+- `admin_users` in policy is a break-glass path.
+- Optional future cleanup: migrate persistent admin access to OpenWebUI group `role:admin`.
+
 ## Troubleshooting First Aid
 1. Docker exec role check (replace `<uuid>`):
 ```bash

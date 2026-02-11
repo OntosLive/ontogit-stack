@@ -7,6 +7,7 @@ OPENWEBUI_BASE_URL="${OPENWEBUI_BASE_URL:-http://127.0.0.1:3000}"
 OPENWEBUI_ADMIN_TOKEN="${OPENWEBUI_ADMIN_TOKEN:-}"
 USER_ID="${USER_ID:-}"
 USER_EMAIL="${USER_EMAIL:-}"
+SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 TMP_DIR="/tmp/ontogit_smoke_role_source"
 mkdir -p "${TMP_DIR}"
 
@@ -274,11 +275,13 @@ restore_policy() {
 
 cleanup() {
   restore_policy
-  (
-    cd "${STACK_DIR}" && \
-    ONTOGIT_ROLE_SOURCE= \
-    $DOCKER_CMD compose up -d --force-recreate usage-writer >/dev/null
-  ) || true
+  if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+    (
+      cd "${STACK_DIR}" && \
+      ONTOGIT_ROLE_SOURCE= \
+      $DOCKER_CMD compose up -d --force-recreate usage-writer >/dev/null
+    ) || true
+  fi
 }
 trap cleanup EXIT
 
@@ -340,12 +343,14 @@ curl -sS -X PUT -H 'Content-Type: application/json' \
   -d "{\"role\":\"${FALLBACK_ROLE}\",\"active\":1}" \
   "http://127.0.0.1:8091/users/${USER_ID}" >/dev/null
 
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_ROLE_SOURCE=openwebui \
-  OPENWEBUI_BASE_URL=http://open-webui:8080 \
-  $DOCKER_CMD compose up -d --force-recreate usage-writer
-)
+if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+  (
+    cd "${STACK_DIR}" && \
+    ONTOGIT_ROLE_SOURCE=openwebui \
+    OPENWEBUI_BASE_URL=http://open-webui:8080 \
+    $DOCKER_CMD compose up -d --force-recreate usage-writer
+  )
+fi
 
 sleep 3
 LIMITS_ROLE_ON_JSON="$(wait_limits_json "${USER_ID}" || true)"
@@ -367,11 +372,13 @@ if [ "${ACTUAL_LIMIT_ON}" != "${EXPECTED}" ] && [ "${ACTUAL_LIMIT_ON}" != "${EXP
   exit 1
 fi
 
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_ROLE_SOURCE= \
-  $DOCKER_CMD compose up -d --force-recreate usage-writer
-)
+if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+  (
+    cd "${STACK_DIR}" && \
+    ONTOGIT_ROLE_SOURCE= \
+    $DOCKER_CMD compose up -d --force-recreate usage-writer
+  )
+fi
 
 sleep 3
 LIMITS_ROLE_OFF_JSON="$(wait_limits_json "${USER_ID}" || true)"
