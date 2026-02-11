@@ -26,8 +26,8 @@ if [ -f "${WEBUI_DIR}/.env.local" ]; then
   set +a
 fi
 
-PROFILE_FILE="/tmp/ontogit_dev_profile"
-BUILD_FILE="/tmp/ontogit_dev_build"
+PROFILE_FILE="/home/ontoslive/.cache/ontogit/dev_profile"
+BUILD_FILE="/home/ontoslive/.cache/ontogit/dev_build"
 echo "$PROFILE" > "$PROFILE_FILE"
 echo "$BUILD" > "$BUILD_FILE"
 
