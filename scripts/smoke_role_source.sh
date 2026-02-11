@@ -6,6 +6,7 @@ POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 OPENWEBUI_BASE_URL="${OPENWEBUI_BASE_URL:-http://127.0.0.1:3000}"
 OPENWEBUI_ADMIN_TOKEN="${OPENWEBUI_ADMIN_TOKEN:-}"
 USER_ID="${USER_ID:-}"
+USER_EMAIL="${USER_EMAIL:-}"
 TMP_DIR="/tmp/ontogit_smoke_role_source"
 mkdir -p "${TMP_DIR}"
 
@@ -34,11 +35,171 @@ if [ -z "${SERVICE_SECRET}" ]; then
   exit 1
 fi
 
+resolve_user_id_by_email() {
+  local email="$1"
+  local whereami_out=""
+  local data_mount=""
+  local db_path=""
+  whereami_out="$("${STACK_DIR}/scripts/ow_whereami.sh" 2>/dev/null || true)"
+  data_mount="$(printf '%s\n' "${whereami_out}" | awk -F': ' '/^data_mount_host_path:/{print $2; exit}')"
+  if [ -z "${data_mount}" ]; then
+    echo "Could not detect OpenWebUI data mount via ./scripts/ow_whereami.sh"
+    return 1
+  fi
+  db_path="${data_mount}/webui.db"
+  if [ ! -f "${db_path}" ]; then
+    echo "OpenWebUI DB not found at ${db_path}"
+    return 1
+  fi
+  python3 - "${db_path}" "${email}" <<'PY'
+import sqlite3, sys
+db_path, email = sys.argv[1], sys.argv[2]
+try:
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("SELECT id FROM user WHERE email = ? LIMIT 1", (email,))
+    row = cur.fetchone()
+    con.close()
+    print((row[0] if row and row[0] else ""))
+except Exception:
+    print("")
+PY
+}
+
+ROLE_FETCH_METHOD=""
+ROLE_FETCH_HTTP_CODE=""
+ROLE_FETCH_BODY=""
+
+_role_fetch_host() {
+  local role_url="$1"
+  local body_file="${TMP_DIR}/role_fetch_host_body.$$"
+  local code_file="${TMP_DIR}/role_fetch_host_code.$$"
+  local http_code=""
+  curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 \
+    -H "X-Ontos-Service-Auth: ${SERVICE_SECRET}" \
+    -H "X-OpenWebUI-User-Id: ${USER_ID}" \
+    -H "Accept: application/json" \
+    -o "${body_file}" -w "%{http_code}" "${role_url}" > "${code_file}" || true
+  http_code="$(cat "${code_file}" 2>/dev/null || true)"
+  ROLE_FETCH_HTTP_CODE="${http_code}"
+  ROLE_FETCH_BODY="$(cat "${body_file}" 2>/dev/null || true)"
+}
+
+_select_docker_role_fetch_container() {
+  local name=""
+  name="$($DOCKER_CMD ps --format '{{.Names}}' | awk '$0=="ontogit-stack-memory-service-1"{print; exit}')"
+  if [ -n "${name}" ]; then
+    echo "${name}"
+    return 0
+  fi
+  name="$($DOCKER_CMD ps --format '{{.Names}}' | awk '$0=="ontogit-stack-header-injector-1"{print; exit}')"
+  if [ -n "${name}" ]; then
+    echo "${name}"
+    return 0
+  fi
+  return 1
+}
+
+_role_fetch_docker() {
+  local role_url="$1"
+  local container_name=""
+  container_name="$(_select_docker_role_fetch_container || true)"
+  if [ -z "${container_name}" ]; then
+    ROLE_FETCH_BODY=""
+    return 1
+  fi
+  ROLE_FETCH_BODY="$($DOCKER_CMD exec \
+    -e ROLE_URL="${role_url}" \
+    -e SERVICE_SECRET="${SERVICE_SECRET}" \
+    -e USER_ID="${USER_ID}" \
+    "${container_name}" \
+    python3 - <<'PY'
+import os, urllib.request, sys
+url = os.environ["ROLE_URL"]
+req = urllib.request.Request(url, headers={
+  "X-Ontos-Service-Auth": os.environ["SERVICE_SECRET"],
+  "X-OpenWebUI-User-Id": os.environ["USER_ID"],
+})
+try:
+  with urllib.request.urlopen(req, timeout=10) as r:
+    body = r.read().decode("utf-8", "replace")
+    print(body)
+except Exception:
+  print("", end="")
+  sys.exit(2)
+PY
+  2>/dev/null || true)"
+}
+
+get_role_json() {
+  local role_url="${OPENWEBUI_BASE_URL%/}/api/v1/ontogit/user_role"
+  local base_no_proto=""
+  local host_port=""
+  local host=""
+  base_no_proto="${OPENWEBUI_BASE_URL#*://}"
+  host_port="${base_no_proto%%/*}"
+  host="${host_port%%:*}"
+
+  ROLE_FETCH_METHOD=""
+  ROLE_FETCH_HTTP_CODE=""
+  ROLE_FETCH_BODY=""
+
+  if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
+    _role_fetch_host "${role_url}"
+    ROLE_FETCH_METHOD="host"
+    if [ "${ROLE_FETCH_HTTP_CODE}" = "200" ] && [ -n "${ROLE_FETCH_BODY}" ]; then
+      return 0
+    fi
+  fi
+
+  _role_fetch_docker "${role_url}"
+  if [ -n "${ROLE_FETCH_BODY}" ]; then
+    ROLE_FETCH_METHOD="docker"
+    ROLE_FETCH_HTTP_CODE="${ROLE_FETCH_HTTP_CODE:-n/a}"
+    return 0
+  fi
+  ROLE_FETCH_METHOD="${ROLE_FETCH_METHOD:-docker}"
+  return 1
+}
+
+print_role_diag_and_exit() {
+  local preview=""
+  preview="$(printf '%s' "${ROLE_FETCH_BODY:-}" | head -c 300)"
+  echo "Failed to resolve role from OpenWebUI"
+  echo "diag.OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL}"
+  echo "diag.method=${ROLE_FETCH_METHOD:-unknown}"
+  echo "diag.http_code=${ROLE_FETCH_HTTP_CODE:-n/a}"
+  echo "diag.body_preview=${preview}"
+  echo "hint: curl -i http://127.0.0.1:3000/api/v1/ontogit/user_role"
+  exit 1
+}
+
+if [ -z "${USER_ID}" ] && [ -n "${USER_EMAIL}" ]; then
+  USER_ID="$(resolve_user_id_by_email "${USER_EMAIL}")"
+  if [ -z "${USER_ID}" ]; then
+    echo "Could not resolve USER_ID from USER_EMAIL=${USER_EMAIL}"
+    echo "Hint: verify email exists in current OpenWebUI universe and rerun."
+    exit 1
+  fi
+fi
 if [ -z "${USER_ID}" ] && [ -n "${OPENWEBUI_ADMIN_TOKEN}" ]; then
-  USER_ID="$(curl -sS -H "Authorization: Bearer ${OPENWEBUI_ADMIN_TOKEN}" "${OPENWEBUI_BASE_URL}/api/v1/auths/" | python3 -c 'import sys,json; print((json.load(sys.stdin) or {}).get("id", ""))')"
+  AUTHS_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 \
+    -H "Authorization: Bearer ${OPENWEBUI_ADMIN_TOKEN}" \
+    "${OPENWEBUI_BASE_URL}/api/v1/auths/" || true)"
+  USER_ID="$(python3 - "${AUTHS_JSON}" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print("")
+    sys.exit(0)
+print((data or {}).get("id", ""))
+PY
+)"
 fi
 if [ -z "${USER_ID}" ]; then
-  echo "Provide USER_ID=<openwebui-user-uuid> (or OPENWEBUI_ADMIN_TOKEN to auto-fetch)"
+  echo "Provide USER_ID=<openwebui-user-uuid>, USER_EMAIL=<email>, or OPENWEBUI_ADMIN_TOKEN"
   exit 1
 fi
 
@@ -96,11 +257,24 @@ roles:
       limit_usd: 0
 YAML
 
-ROLE_JSON="$(curl -sS -H "X-Ontos-Service-Auth: ${SERVICE_SECRET}" -H "X-OpenWebUI-User-Id: ${USER_ID}" "${OPENWEBUI_BASE_URL}/api/v1/ontogit/user_role")"
-ROLE="$(python3 -c 'import sys,json; print((json.load(sys.stdin) or {}).get("role", ""))' <<<"${ROLE_JSON}")"
+if ! get_role_json; then
+  print_role_diag_and_exit
+fi
+ROLE_JSON="${ROLE_FETCH_BODY}"
+ROLE="$(python3 - "${ROLE_JSON}" <<'PY'
+import json,sys
+raw = sys.argv[1]
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print("")
+    sys.exit(0)
+role = (data or {}).get("role", "")
+print(role if isinstance(role, str) else "")
+PY
+)"
 if [ -z "${ROLE}" ]; then
-  echo "Failed to resolve role from OpenWebUI: ${ROLE_JSON}"
-  exit 1
+  print_role_diag_and_exit
 fi
 
 FALLBACK_ROLE="pro"
