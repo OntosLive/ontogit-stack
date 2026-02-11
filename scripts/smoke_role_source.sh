@@ -215,7 +215,7 @@ wait_limits_json() {
   local ok="0"
   local i=1
   while [ "${i}" -le 25 ]; do
-    out="$(curl -sS --retry 2 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${user_id}" || true)"
+    out="$(curl -sS --retry 2 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${user_id}" 2>/dev/null || true)"
     ok="$(has_limit_usd "${out}")"
     if [ "${ok}" = "1" ]; then
       printf '%s' "${out}"
