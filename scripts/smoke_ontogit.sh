@@ -35,7 +35,7 @@ wait_for_health() {
   local start
   start="$(date +%s)"
   while true; do
-    code="$(curl -s -m 2 -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)"
+    code="$(curl -m 3 -s -m 2 -o /dev/null -w "%{http_code}" "$BASE_URL/health" || true)"
     if [ "$code" = "200" ] || [ "$code" = "401" ]; then
       return 0
     fi
@@ -48,7 +48,7 @@ wait_for_health() {
 }
 
 echo "==> /health without service-auth should be 401"
-code="$(curl -s -o /tmp/health_noauth.json -w "%{http_code}" "$BASE_URL/health")"
+code="$(curl -m 3 -s -o /tmp/health_noauth.json -w "%{http_code}" "$BASE_URL/health")"
 echo "status=$code"
 if [ "$code" != "401" ]; then
   echo "Expected 401 on /health without service-auth, got $code"
@@ -56,7 +56,7 @@ if [ "$code" != "401" ]; then
 fi
 
 echo "==> /health with service-auth should be 200"
-code="$(curl -s -o /tmp/health_auth.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" "$BASE_URL/health")"
+code="$(curl -m 3 -s -o /tmp/health_auth.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" "$BASE_URL/health")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /health with service-auth, got $code"
@@ -64,7 +64,7 @@ if [ "$code" != "200" ]; then
 fi
 
 echo "==> /recall with service-auth + user-id"
-code="$(curl -s -o /tmp/recall.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: u1" -H "Content-Type: application/json" -d '{"query":"test","k":1}' "$BASE_URL/recall")"
+code="$(curl -m 3 -s -o /tmp/recall.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: u1" -H "Content-Type: application/json" -d '{"query":"test","k":1}' "$BASE_URL/recall")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /recall, got $code"
@@ -72,7 +72,7 @@ if [ "$code" != "200" ]; then
 fi
 
 echo "==> /commit with service-auth + user-id"
-code="$(curl -s -o /tmp/commit.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: u1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
+code="$(curl -m 3 -s -o /tmp/commit.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: u1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /commit, got $code"
@@ -98,13 +98,13 @@ fi
 sqlite3 "$DB_PATH" "delete from memory_usage_events where user_id in ('user1','admin') and ts >= ${today_start};"
 
 echo "==> non-admin user should hit 429 on second request"
-code="$(curl -s -o /tmp/commit_user1_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: user1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
+code="$(curl -m 3 -s -o /tmp/commit_user1_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: user1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /commit for user1 first request, got $code"
   exit 1
 fi
-code="$(curl -s -o /tmp/commit_user1_b.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: user1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
+code="$(curl -m 3 -s -o /tmp/commit_user1_b.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: user1" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
 if [ "$code" != "429" ]; then
   echo "Expected 429 on /commit for user1 second request, got $code"
@@ -112,13 +112,13 @@ if [ "$code" != "429" ]; then
 fi
 
 echo "==> admin user should bypass limits"
-code="$(curl -s -o /tmp/commit_admin_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: admin" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
+code="$(curl -m 3 -s -o /tmp/commit_admin_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: admin" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /commit for admin first request, got $code"
   exit 1
 fi
-code="$(curl -s -o /tmp/commit_admin_b.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: admin" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
+code="$(curl -m 3 -s -o /tmp/commit_admin_b.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: admin" -H "Content-Type: application/json" -d '{"title":"t","body":"b"}' "$BASE_URL/commit")"
 echo "status=$code"
 if [ "$code" != "200" ]; then
   echo "Expected 200 on /commit for admin second request, got $code"
