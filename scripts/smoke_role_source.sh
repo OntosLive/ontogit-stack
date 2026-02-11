@@ -106,12 +106,12 @@ _role_fetch_docker() {
     return 1
   fi
   ROLE_FETCH_CONTAINER="${container_name}"
-  $DOCKER_CMD exec \
+  $DOCKER_CMD exec -i \
     -e ROLE_URL="${role_url}" \
     -e ONTOS_SERVICE_AUTH_SECRET="${SERVICE_SECRET}" \
     -e USER_ID="${USER_ID}" \
     "${container_name}" \
-    python3 - <<'PY' > "${body_file}" 2> "${err_file}" || rc=$?
+    sh -lc 'python3 -' <<'PY' > "${body_file}" 2> "${err_file}" || rc=$?
 import os, urllib.request, sys
 url = os.environ["ROLE_URL"]
 req = urllib.request.Request(url, headers={
