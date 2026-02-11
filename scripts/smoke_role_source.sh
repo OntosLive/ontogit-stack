@@ -69,6 +69,7 @@ PY
 ROLE_FETCH_METHOD=""
 ROLE_FETCH_HTTP_CODE=""
 ROLE_FETCH_BODY=""
+ROLE_FETCH_CONTAINER=""
 
 _role_fetch_host() {
   local role_url="$1"
@@ -87,6 +88,11 @@ _role_fetch_host() {
 
 _select_docker_role_fetch_container() {
   local name=""
+  name="$($DOCKER_CMD ps --format '{{.Names}}' | awk '$0=="ontogit-stack-usage-writer-1"{print; exit}')"
+  if [ -n "${name}" ]; then
+    echo "${name}"
+    return 0
+  fi
   name="$($DOCKER_CMD ps --format '{{.Names}}' | awk '$0=="ontogit-stack-memory-service-1"{print; exit}')"
   if [ -n "${name}" ]; then
     echo "${name}"
@@ -103,12 +109,16 @@ _select_docker_role_fetch_container() {
 _role_fetch_docker() {
   local role_url="$1"
   local container_name=""
+  local body_file="${TMP_DIR}/role_fetch_docker_body.$$"
+  local rc=0
   container_name="$(_select_docker_role_fetch_container || true)"
   if [ -z "${container_name}" ]; then
     ROLE_FETCH_BODY=""
+    ROLE_FETCH_CONTAINER=""
     return 1
   fi
-  ROLE_FETCH_BODY="$($DOCKER_CMD exec \
+  ROLE_FETCH_CONTAINER="${container_name}"
+  $DOCKER_CMD exec \
     -e ROLE_URL="${role_url}" \
     -e SERVICE_SECRET="${SERVICE_SECRET}" \
     -e USER_ID="${USER_ID}" \
@@ -128,7 +138,14 @@ except Exception:
   print("", end="")
   sys.exit(2)
 PY
-  2>/dev/null || true)"
+  > "${body_file}" 2>/dev/null || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    ROLE_FETCH_BODY=""
+    ROLE_FETCH_HTTP_CODE="docker_exec_${rc}"
+    return 1
+  fi
+  ROLE_FETCH_BODY="$(cat "${body_file}" 2>/dev/null || true)"
+  return 0
 }
 
 get_role_json() {
@@ -143,6 +160,7 @@ get_role_json() {
   ROLE_FETCH_METHOD=""
   ROLE_FETCH_HTTP_CODE=""
   ROLE_FETCH_BODY=""
+  ROLE_FETCH_CONTAINER=""
 
   if [ "${host}" = "127.0.0.1" ] || [ "${host}" = "localhost" ]; then
     _role_fetch_host "${role_url}"
@@ -152,13 +170,12 @@ get_role_json() {
     fi
   fi
 
+  ROLE_FETCH_METHOD="docker"
   _role_fetch_docker "${role_url}"
   if [ -n "${ROLE_FETCH_BODY}" ]; then
-    ROLE_FETCH_METHOD="docker"
     ROLE_FETCH_HTTP_CODE="${ROLE_FETCH_HTTP_CODE:-n/a}"
     return 0
   fi
-  ROLE_FETCH_METHOD="${ROLE_FETCH_METHOD:-docker}"
   return 1
 }
 
@@ -168,10 +185,29 @@ print_role_diag_and_exit() {
   echo "Failed to resolve role from OpenWebUI"
   echo "diag.OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL}"
   echo "diag.method=${ROLE_FETCH_METHOD:-unknown}"
+  echo "diag.container=${ROLE_FETCH_CONTAINER:-n/a}"
   echo "diag.http_code=${ROLE_FETCH_HTTP_CODE:-n/a}"
   echo "diag.body_preview=${preview}"
   echo "hint: curl -i http://127.0.0.1:3000/api/v1/ontogit/user_role"
   exit 1
+}
+
+parse_limits_line() {
+  local raw="$1"
+  python3 - "${raw}" <<'PY'
+import json, sys
+raw = sys.argv[1]
+try:
+    d = json.loads(raw or "{}")
+except Exception:
+    print("")
+    sys.exit(0)
+role = d.get("role", "")
+limit = d.get("limit_usd", "")
+if not isinstance(role, str):
+    role = ""
+print(f"{role} {limit}")
+PY
 }
 
 if [ -z "${USER_ID}" ] && [ -n "${USER_EMAIL}" ]; then
@@ -294,7 +330,13 @@ curl -sS -X PUT -H 'Content-Type: application/json' \
 )
 
 sleep 3
-LIMITS_ROLE_ON="$(curl -sS "http://127.0.0.1:8091/limits/${USER_ID}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("role",""), d.get("limit_usd", ""))')"
+LIMITS_ROLE_ON_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${USER_ID}" || true)"
+LIMITS_ROLE_ON="$(parse_limits_line "${LIMITS_ROLE_ON_JSON}")"
+if [ -z "${LIMITS_ROLE_ON}" ]; then
+  echo "Failed to parse /limits response with ROLE_SOURCE enabled"
+  echo "diag.body_preview=$(printf '%s' "${LIMITS_ROLE_ON_JSON}" | head -c 300)"
+  exit 1
+fi
 EXPECTED=""
 case "${ROLE}" in
   admin) EXPECTED="0" ;;
@@ -314,7 +356,13 @@ fi
 )
 
 sleep 3
-LIMITS_ROLE_OFF="$(curl -sS "http://127.0.0.1:8091/limits/${USER_ID}" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("role",""), d.get("limit_usd", ""))')"
+LIMITS_ROLE_OFF_JSON="$(curl -sS --retry 10 --retry-delay 1 --retry-connrefused --max-time 10 "http://127.0.0.1:8091/limits/${USER_ID}" || true)"
+LIMITS_ROLE_OFF="$(parse_limits_line "${LIMITS_ROLE_OFF_JSON}")"
+if [ -z "${LIMITS_ROLE_OFF}" ]; then
+  echo "Failed to parse /limits response with ROLE_SOURCE disabled"
+  echo "diag.body_preview=$(printf '%s' "${LIMITS_ROLE_OFF_JSON}" | head -c 300)"
+  exit 1
+fi
 EXPECTED_OFF="55"
 if [ "${FALLBACK_ROLE}" = "basic" ]; then
   EXPECTED_OFF="11"
