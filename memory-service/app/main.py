@@ -179,6 +179,9 @@ def _get_user_id(request: Request) -> str:
 
 
 def _append_warn_header(response: Response, code: str):
+    # Backward compatibility: normalize legacy internal warn token to canonical public text.
+    if code == "user_id_missing":
+        code = WARN_USER_ID_MISSING
     prev = response.headers.get("X-Ontogit-Warn")
     if not prev:
         response.headers["X-Ontogit-Warn"] = code
