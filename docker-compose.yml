@@ -5,6 +5,8 @@ services:
       dockerfile: header-injector/Dockerfile
     env_file:
     - .env
+    volumes:
+    - /home/ontoslive/ontos_data/ontogit-user:/ontogit_user
     depends_on:
     - openai-proxy
     ports:
