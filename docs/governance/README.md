@@ -28,6 +28,7 @@
 - OpenWebUI: `http://127.0.0.1:3000`
 - user_role (internal via docker): `http://open-webui:8080/api/v1/ontogit/user_role`
 - usage-writer limits: `http://127.0.0.1:8091/limits/{user_id}`
+- header-injector metrics: `http://127.0.0.1:8089/metrics`
 
 ## Operator Checklist
 - A) Add user and assign group `role:pro` or `role:admin` in OpenWebUI.

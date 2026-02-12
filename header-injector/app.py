@@ -4,6 +4,7 @@ import httpx
 import asyncio
 import json
 import logging
+import threading
 from urllib.parse import quote
 
 UPSTREAM = os.environ.get("OPENAI_PROXY_URL", "http://openai-proxy:8088")
@@ -18,6 +19,10 @@ FALLBACK_USER = os.environ.get(
 
 app = FastAPI()
 log = logging.getLogger("header_injector")
+METRICS_LOCK = threading.Lock()
+REQUESTS_TOTAL: dict[str, int] = {"soft": 0, "hard": 0}
+BLOCKED_TOTAL = 0
+WARN_TOTAL: dict[str, int] = {"none": 0, "70": 0, "90": 0, "exceeded": 0}
 
 
 def _pick_first_header(req: Request, keys: list[str]) -> str | None:
@@ -84,15 +89,7 @@ def _build_limit_headers(limit_state: dict | None) -> dict[str, str]:
     warn_70 = float(limit_state.get("warn_70") or 0.7)
     warn_90 = float(limit_state.get("warn_90") or 0.9)
     role = str(limit_state.get("role", "") or "")
-    warn_level = "none"
-    if limit_usd > 0:
-        ratio = used_usd / limit_usd
-        if used_usd >= limit_usd:
-            warn_level = "exceeded"
-        elif ratio >= warn_90:
-            warn_level = "90"
-        elif ratio >= warn_70:
-            warn_level = "70"
+    warn_level = _compute_warn_level(limit_usd, used_usd, warn_70, warn_90)
     headers = {
         "X-Ontogit-Limit-Used-Usd": f"{used_usd:.6f}",
         "X-Ontogit-Limit-Limit-Usd": f"{limit_usd:.6f}",
@@ -102,8 +99,61 @@ def _build_limit_headers(limit_state: dict | None) -> dict[str, str]:
     return headers
 
 
+def _compute_warn_level(limit_usd: float, used_usd: float, warn_70: float, warn_90: float) -> str:
+    if limit_usd <= 0:
+        return "none"
+    ratio = used_usd / limit_usd
+    if used_usd >= limit_usd:
+        return "exceeded"
+    if ratio >= warn_90:
+        return "90"
+    if ratio >= warn_70:
+        return "70"
+    return "none"
+
+
+def _inc_requests(mode: str) -> None:
+    m = mode if mode in ("soft", "hard") else "soft"
+    with METRICS_LOCK:
+        REQUESTS_TOTAL[m] = int(REQUESTS_TOTAL.get(m, 0)) + 1
+
+
+def _inc_blocked() -> None:
+    global BLOCKED_TOTAL
+    with METRICS_LOCK:
+        BLOCKED_TOTAL += 1
+
+
+def _inc_warn(level: str) -> None:
+    l = level if level in ("none", "70", "90", "exceeded") else "none"
+    with METRICS_LOCK:
+        WARN_TOTAL[l] = int(WARN_TOTAL.get(l, 0)) + 1
+
+
+@app.get("/metrics")
+async def metrics():
+    with METRICS_LOCK:
+        req = dict(REQUESTS_TOTAL)
+        warn = dict(WARN_TOTAL)
+        blocked = int(BLOCKED_TOTAL)
+    lines = [
+        '# TYPE ontogit_requests_total counter',
+        f'ontogit_requests_total{{mode="soft"}} {int(req.get("soft", 0))}',
+        f'ontogit_requests_total{{mode="hard"}} {int(req.get("hard", 0))}',
+        '# TYPE ontogit_gate_block_total counter',
+        f'ontogit_gate_block_total {blocked}',
+        '# TYPE ontogit_warn_total counter',
+        f'ontogit_warn_total{{level="none"}} {int(warn.get("none", 0))}',
+        f'ontogit_warn_total{{level="70"}} {int(warn.get("70", 0))}',
+        f'ontogit_warn_total{{level="90"}} {int(warn.get("90", 0))}',
+        f'ontogit_warn_total{{level="exceeded"}} {int(warn.get("exceeded", 0))}',
+    ]
+    return Response(content="\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy(path: str, req: Request):
+    _inc_requests(LIMIT_MODE)
     headers = dict(req.headers)
     headers.pop("host", None)
 
@@ -121,6 +171,7 @@ async def proxy(path: str, req: Request):
         limit_usd = float(limit_state.get("limit_usd") or 0.0)
         used_usd = float(limit_state.get("used_usd") or 0.0)
         if limit_usd > 0 and used_usd >= limit_usd:
+            _inc_blocked()
             return Response(
                 content=json.dumps(
                     {
@@ -151,6 +202,17 @@ async def proxy(path: str, req: Request):
     if LIMIT_MODE == "soft" and response_status == 429:
         response_status = 200
         log.warning("soft_mode_no_block: rewrote upstream 429 to 200")
+    if LIMIT_MODE == "soft":
+        if limit_state:
+            warn_level = _compute_warn_level(
+                float(limit_state.get("limit_usd") or 0.0),
+                float(limit_state.get("used_usd") or 0.0),
+                float(limit_state.get("warn_70") or 0.7),
+                float(limit_state.get("warn_90") or 0.9),
+            )
+            _inc_warn(warn_level)
+        else:
+            _inc_warn("none")
 
     return Response(
         content=upstream.content,
