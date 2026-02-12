@@ -59,6 +59,25 @@ docker compose up -d --force-recreate
 ```
 - Verify restart logs do not contain runtime `pip install` for `usage-writer`, `header-injector`, `openai-proxy`.
 
+## WSL / Docker Desktop (sudo -n for smokes)
+- Why: smoke scripts may need `sudo -n docker`; interactive sudo will fail in automation.
+```bash
+sudo -n true && echo sudo_n_ok
+sudo -n "$(command -v docker)" ps >/dev/null && echo OK_nopasswd || echo FAIL_nopasswd
+```
+```bash
+DOCKER_BIN="$(command -v docker)"
+sudo tee /etc/sudoers.d/ontogit-docker-nopasswd >/dev/null <<EOF
+ontoslive ALL=(root) NOPASSWD: $DOCKER_BIN
+EOF
+sudo chmod 0440 /etc/sudoers.d/ontogit-docker-nopasswd
+sudo visudo -cf /etc/sudoers.d/ontogit-docker-nopasswd
+```
+```bash
+SMOKE_NO_RECREATE=1 ./scripts/smoke_enforcement_soft.sh
+SMOKE_NO_RECREATE=1 ./scripts/smoke_enforcement_hard.sh
+```
+
 ## Soft Mode
 - `ONTOGIT_LIMIT_MODE=soft` forwards requests and never blocks.
 - Response headers contract:

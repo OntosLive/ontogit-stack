@@ -97,6 +97,25 @@ AUTO_ROLLBACK=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke
 ## Docker access note
 If Docker requires sudo in this environment, run scripts with `sudo` (or they will auto-detect and use `sudo` for read-only docker commands where possible).
 
+## WSL / Docker Desktop (sudo -n for smokes)
+- Why: smoke scripts may need `sudo -n docker`; interactive sudo will fail in automated runs.
+```bash
+sudo -n true && echo sudo_n_ok
+sudo -n "$(command -v docker)" ps >/dev/null && echo OK_nopasswd || echo FAIL_nopasswd
+```
+```bash
+DOCKER_BIN="$(command -v docker)"
+sudo tee /etc/sudoers.d/ontogit-docker-nopasswd >/dev/null <<EOF
+ontoslive ALL=(root) NOPASSWD: $DOCKER_BIN
+EOF
+sudo chmod 0440 /etc/sudoers.d/ontogit-docker-nopasswd
+sudo visudo -cf /etc/sudoers.d/ontogit-docker-nopasswd
+```
+```bash
+SMOKE_NO_RECREATE=1 ./scripts/smoke_enforcement_soft.sh
+SMOKE_NO_RECREATE=1 ./scripts/smoke_enforcement_hard.sh
+```
+
 ## Dev profiles
 - `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.
 - `DEV_PROFILE=full`: includes ollama (and allows build if `DEV_BUILD=1`).
