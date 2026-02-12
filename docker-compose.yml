@@ -1,15 +1,12 @@
 services:
   header-injector:
-    image: python:3.11-slim
+    build:
+      context: .
+      dockerfile: header-injector/Dockerfile
     env_file:
     - .env
-    working_dir: /app
-    volumes:
-    - ./header-injector:/app
     depends_on:
     - openai-proxy
-    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
-      --port 8089 --access-log"
     ports:
     - 127.0.0.1:8089:8089
     restart: unless-stopped
@@ -19,13 +16,11 @@ services:
       USAGE_WRITER_BASE: ${USAGE_WRITER_BASE:-http://usage-writer:8091}
       ONTOGIT_LIMIT_MODE: ${ONTOGIT_LIMIT_MODE-soft}
   openai-proxy:
-    image: python:3.11-slim
+    build:
+      context: .
+      dockerfile: openai-proxy/Dockerfile
     env_file:
     - .env
-    working_dir: /app
-    volumes:
-    - ./openai-proxy:/app
-    - ./common:/app/common:ro
     environment:
     - OPENAI_BASE=https://api.openai.com
     - USAGE_WRITER_URL=http://usage-writer:8091/usage
@@ -35,17 +30,14 @@ services:
     - ONTOGIT_ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
     - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://open-webui:8080}
     - ONTOGIT_DEV_FALLBACK_USER_ID=${ONTOGIT_DEV_FALLBACK_USER_ID:-}
-    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
-      --port 8088 --access-log"
     ports:
     - 8088:8088
     restart: unless-stopped
   usage-writer:
-    image: python:3.11-slim
-    working_dir: /app
+    build:
+      context: .
+      dockerfile: usage-writer/Dockerfile
     volumes:
-    - ./usage-writer:/app
-    - ./common:/app/common:ro
     - /home/ontoslive/ontos_data/ontogit-user:/ontogit_user
     environment:
     - USAGE_DB=/ontogit_user/usage.db
@@ -63,8 +55,6 @@ services:
     - ONTOGIT_DAILY_TOKEN_LIMIT=${ONTOGIT_DAILY_TOKEN_LIMIT-}
     - ONTOGIT_LIMIT_MODE=${ONTOGIT_LIMIT_MODE-soft}
     - ONTOGIT_ADMIN_USERS=${ONTOGIT_ADMIN_USERS-}
-    command: bash -lc "pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0
-      --port 8091"
     ports:
     - 8091:8091
     restart: unless-stopped

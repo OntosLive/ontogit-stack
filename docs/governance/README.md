@@ -50,6 +50,13 @@ GOV_SMOKE_PRO_EMAIL=pro@example.com GOV_SMOKE_ADMIN_EMAIL=admin@example.com SMOK
 ./scripts/snapshot_governance_bundle.sh
 ```
 
+## Speed Mode
+```bash
+docker compose build
+docker compose up -d --force-recreate
+```
+- Verify restart logs do not contain runtime `pip install` for `usage-writer`, `header-injector`, `openai-proxy`.
+
 ## Precedence Test
 - Use `test@test.ru` for precedence verification.
 - Put this user in BOTH groups: `role:admin` and `role:pro`.
