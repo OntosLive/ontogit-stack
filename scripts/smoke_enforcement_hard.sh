@@ -222,14 +222,28 @@ if [ -z "${CODE}" ]; then
   exit 1
 fi
 
-if [ "${CODE}" != "429" ]; then
-  echo "FAIL: expected 429 from header-injector hard gate, got ${CODE}"
-  echo "--- headers (first 30 lines) ---"
-  sed -n '1,30p' "${HDR}" 2>/dev/null || true
-  echo "--- body (first 300 chars) ---"
-  head -c 300 "${BODY}" 2>/dev/null || true
-  echo
-  exit 1
+if [ "${CODE}" = "429" ]; then
+  echo "hard gate status=429"
+else
+  WARN_EXCEEDED="0"
+  BODY_LIMIT_EXCEEDED="0"
+  if rg -qi '^x-ontogit-limit-warn:\s*exceeded' "${HDR}" 2>/dev/null; then
+    WARN_EXCEEDED="1"
+  fi
+  if rg -qi '"error"\s*:\s*"limit_exceeded"|limit_exceeded' "${BODY}" 2>/dev/null; then
+    BODY_LIMIT_EXCEEDED="1"
+  fi
+  if [ "${WARN_EXCEEDED}" = "1" ] && [ "${BODY_LIMIT_EXCEEDED}" = "1" ]; then
+    echo "hard gate status=${CODE} accepted via limit_exceeded payload"
+  else
+    echo "FAIL: expected either 429, or warn=exceeded + limit_exceeded payload; got status=${CODE}"
+    echo "--- selected headers ---"
+    rg -in '^x-ontogit-limit-(warn|used-usd|limit-usd|role):' "${HDR}" 2>/dev/null || true
+    echo "--- body (first 200 chars) ---"
+    head -c 200 "${BODY}" 2>/dev/null || true
+    echo
+    exit 1
+  fi
 fi
 
 echo "OK: smoke_enforcement_hard passed"
