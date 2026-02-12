@@ -42,7 +42,7 @@ services:
     environment:
     - USAGE_DB=/ontogit_user/usage.db
     - POLICY_PATH=/ontogit_user/onto_policy.yml
-    - ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
+    - ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-openwebui}
     - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://open-webui:8080}
     - ONTOGIT_ROLE_ENDPOINT=${ONTOGIT_ROLE_ENDPOINT:-/api/v1/ontogit/user_role}
     - ONTOS_SERVICE_AUTH_SECRET=${ONTOS_SERVICE_AUTH_SECRET}

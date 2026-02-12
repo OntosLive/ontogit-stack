@@ -4,6 +4,7 @@
 - Identity and group membership source of truth: OpenWebUI.
 - Limits source of truth: OntoGit policy-as-code.
 - Runtime role source in this setup: `role-source=openwebui`.
+- Default deployment sets `usage-writer` `ROLE_SOURCE=openwebui` (override via `ONTOGIT_ROLE_SOURCE` if needed).
 
 ## Canonical Role Groups
 - `role:admin`
