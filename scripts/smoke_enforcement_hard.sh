@@ -5,6 +5,7 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 TMP_DIR="$(mktemp -d /tmp/ontogit_smoke_enforcement_hard.XXXXXX)"
 HI_PORT="${HI_PORT:-8089}"
+SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -19,7 +20,7 @@ fi
 
 BACKUP_FILE="${TMP_DIR}/onto_policy.backup.$(date +%s).yml"
 HAD_POLICY=0
-if [ -f "${POLICY_HOST_PATH}" ]; then
+if [ "${SMOKE_NO_RECREATE}" != "1" ] && [ -f "${POLICY_HOST_PATH}" ]; then
   cp "${POLICY_HOST_PATH}" "${BACKUP_FILE}"
   HAD_POLICY=1
 fi
@@ -34,15 +35,30 @@ restore_policy() {
 
 cleanup() {
   restore_policy
-  (
-    cd "${STACK_DIR}" && \
-    ONTOGIT_LIMIT_MODE=soft \
-    $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector >/dev/null
-  ) || true
+  if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+    (
+      cd "${STACK_DIR}" && \
+      ONTOGIT_LIMIT_MODE=soft \
+      $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector >/dev/null
+    ) || true
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
+maybe_recreate() {
+  if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+    echo "SMOKE_NO_RECREATE=1: skipping recreate for $*"
+    return 0
+  fi
+  (
+    cd "${STACK_DIR}" && \
+    ONTOGIT_LIMIT_MODE=hard \
+    $DOCKER_CMD compose up -d --force-recreate --no-deps "$@"
+  )
+}
+
+if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
 cat > "${POLICY_HOST_PATH}" <<'YAML'
 version: 1
 admin_users: []
@@ -71,6 +87,7 @@ roles:
     monthly:
       limit_usd: 0
 YAML
+fi
 
 wait_http_200() {
   local url="$1"
@@ -108,21 +125,41 @@ wait_header_injector_ready() {
 }
 
 echo "==> recreate usage-writer + header-injector in hard mode"
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_LIMIT_MODE=hard \
-  $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector
-)
+maybe_recreate usage-writer header-injector
 
 wait_http_200 "http://127.0.0.1:8091/limits/ping"
 wait_header_injector_ready
 
 TS="$(date +%s)"
 TEST_USER="enforce_hard_${TS}"
+LIMITS_PRE_JSON="$(curl -sS "http://127.0.0.1:8091/limits/${TEST_USER}")"
+LIMIT_PRE="$(python3 - "${LIMITS_PRE_JSON}" <<'PY'
+import json, sys
+try:
+    d = json.loads(sys.argv[1] or "{}")
+except Exception:
+    print("0")
+    raise SystemExit(0)
+print(float(d.get("limit_usd") or 0.0))
+PY
+)"
+if python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+raise SystemExit(0 if float(sys.argv[1] or 0.0) > 0 else 1)
+PY
+then :; else
+  echo "Expected positive limit_usd for ${TEST_USER}; got ${LIMIT_PRE}. Configure limits before running hard smoke."
+  exit 1
+fi
+SEED_COST="$(python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+print(f"{float(sys.argv[1]) + 1.0:.6f}")
+PY
+)"
 
 echo "==> seed usage above policy limit for ${TEST_USER}"
 curl -sS -X POST -H 'Content-Type: application/json' \
-  -d "{\"ts\":${TS},\"user_id\":\"${TEST_USER}\",\"model\":\"smoke\",\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"cost_usd\":2.0}" \
+  -d "{\"ts\":${TS},\"user_id\":\"${TEST_USER}\",\"model\":\"smoke\",\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"cost_usd\":${SEED_COST}}" \
   "http://127.0.0.1:8091/usage" >/dev/null
 
 LIMITS_JSON="$(curl -sS "http://127.0.0.1:8091/limits/${TEST_USER}")"

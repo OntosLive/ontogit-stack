@@ -6,6 +6,7 @@ POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 TMP_DIR="$(mktemp -d /tmp/ontogit_smoke_enforcement_soft.XXXXXX)"
 HI_PORT="${HI_PORT:-8089}"
 LIMIT_USD="10"
+SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -20,7 +21,7 @@ fi
 
 BACKUP_FILE="${TMP_DIR}/onto_policy.backup.$(date +%s).yml"
 HAD_POLICY=0
-if [ -f "${POLICY_HOST_PATH}" ]; then
+if [ "${SMOKE_NO_RECREATE}" != "1" ] && [ -f "${POLICY_HOST_PATH}" ]; then
   cp "${POLICY_HOST_PATH}" "${BACKUP_FILE}"
   HAD_POLICY=1
 fi
@@ -35,15 +36,30 @@ restore_policy() {
 
 cleanup() {
   restore_policy
-  (
-    cd "${STACK_DIR}" && \
-    ONTOGIT_LIMIT_MODE=soft \
-    $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector >/dev/null
-  ) || true
+  if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+    (
+      cd "${STACK_DIR}" && \
+      ONTOGIT_LIMIT_MODE=soft \
+      $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector >/dev/null
+    ) || true
+  fi
   rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
 
+maybe_recreate() {
+  if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+    echo "SMOKE_NO_RECREATE=1: skipping recreate for $*"
+    return 0
+  fi
+  (
+    cd "${STACK_DIR}" && \
+    ONTOGIT_LIMIT_MODE=soft \
+    $DOCKER_CMD compose up -d --force-recreate --no-deps "$@"
+  )
+}
+
+if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
 cat > "${POLICY_HOST_PATH}" <<YAML
 version: 1
 admin_users: []
@@ -72,6 +88,7 @@ roles:
     monthly:
       limit_usd: 0
 YAML
+fi
 
 wait_http_200() {
   local url="$1"
@@ -185,31 +202,61 @@ assert_stage() {
 }
 
 echo "==> recreate usage-writer + header-injector in soft mode"
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_LIMIT_MODE=soft \
-  $DOCKER_CMD compose up -d --force-recreate --no-deps usage-writer header-injector
-)
+maybe_recreate usage-writer header-injector
 
 wait_http_200 "http://127.0.0.1:8091/limits/ping"
 wait_header_injector_ready
 
 TS="$(date +%s)"
 TEST_USER="enforce_soft_${TS}"
+LIMITS_PRE_JSON="$(curl -sS "http://127.0.0.1:8091/limits/${TEST_USER}")"
+LIMIT_PRE="$(python3 - "${LIMITS_PRE_JSON}" <<'PY'
+import json, sys
+try:
+    d = json.loads(sys.argv[1] or "{}")
+except Exception:
+    print("0")
+    raise SystemExit(0)
+print(float(d.get("limit_usd") or 0.0))
+PY
+)"
+if python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+raise SystemExit(0 if float(sys.argv[1] or 0.0) > 0 else 1)
+PY
+then :; else
+  echo "Expected positive limit_usd for ${TEST_USER}; got ${LIMIT_PRE}. Configure limits before running soft smoke."
+  exit 1
+fi
+SEED_70="$(python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+print(f"{float(sys.argv[1]) * 0.75:.6f}")
+PY
+)"
+SEED_90="$(python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+print(f"{float(sys.argv[1]) * 0.20:.6f}")
+PY
+)"
+SEED_EXCEEDED="$(python3 - "${LIMIT_PRE}" <<'PY'
+import sys
+print(f"{float(sys.argv[1]) * 0.15:.6f}")
+PY
+)"
 
 echo "==> stage none (<70%)"
 assert_stage "${TEST_USER}" "none" "stage_none"
 
 echo "==> stage 70%"
-seed_usage "${TEST_USER}" "7.5"
+seed_usage "${TEST_USER}" "${SEED_70}"
 assert_stage "${TEST_USER}" "70" "stage70"
 
 echo "==> stage 90%"
-seed_usage "${TEST_USER}" "2.0"
+seed_usage "${TEST_USER}" "${SEED_90}"
 assert_stage "${TEST_USER}" "90" "stage90"
 
 echo "==> stage exceeded"
-seed_usage "${TEST_USER}" "1.5"
+seed_usage "${TEST_USER}" "${SEED_EXCEEDED}"
 assert_stage "${TEST_USER}" "exceeded" "stage_exceeded"
 
 echo "OK: smoke_enforcement_soft passed"

@@ -11,6 +11,7 @@ BASE_URL="http://127.0.0.1:8090"
 DB_PATH="/home/ontoslive/ontos_data/ontogit-user/usage.db"
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WARN_USER_MISSING="User id not propagated; usage will be aggregated"
+SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -84,6 +85,17 @@ check_usage_event_exists() {
   fi
 }
 
+maybe_recreate_memory_service() {
+  if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+    echo "SMOKE_NO_RECREATE=1: skipping memory-service recreate ($*)"
+    return 0
+  fi
+  (
+    cd "$STACK_DIR" && \
+    "$@" $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
+  )
+}
+
 echo "==> /health without service-auth should be 401"
 code="$(curl -m 3 -s -o /tmp/health_noauth.json -w "%{http_code}" "$BASE_URL/health")"
 echo "status=$code"
@@ -121,11 +133,13 @@ check_usage_event_exists "unknown" "recall" "200"
 
 echo "==> soft limit test (second request returns 200 + X-Ontogit-Warn: quota_exceeded)"
 SOFT_USER="user_soft_$(date +%s)"
-(
-  cd "$STACK_DIR" && \
-  ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=soft ONTOGIT_ADMIN_USERS=admin \
-  $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
-)
+if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+  echo "SMOKE_NO_RECREATE=1: skipping soft/hard/admin mode-switch checks"
+  echo "==> last 5 usage events"
+  sqlite3 "$DB_PATH" "select user_id, endpoint, status_code from memory_usage_events order by id desc limit 5;"
+  exit 0
+fi
+maybe_recreate_memory_service env ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=soft ONTOGIT_ADMIN_USERS=admin
 wait_for_health
 
 code="$(curl -m 3 -s -D /tmp/commit_soft_a.headers -o /tmp/commit_soft_a.json -w "%{http_code}" -H "X-Ontos-Service-Auth: $SERVICE_SECRET" -H "X-Ontogit-User: ${SOFT_USER}" -H "Content-Type: application/json" -d '{"title":"soft-a","body":"soft-a"}' "$BASE_URL/commit")"
@@ -140,11 +154,7 @@ check_usage_event_exists "${SOFT_USER}" "commit" "200"
 echo "==> hard limit test (daily request limit=1)"
 HARD_USER="user_hard_$(date +%s)"
 echo "==> recreate memory-service with hard limits"
-(
-  cd "$STACK_DIR" && \
-  ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=hard ONTOGIT_ADMIN_USERS=admin \
-  $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
-)
+maybe_recreate_memory_service env ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=hard ONTOGIT_ADMIN_USERS=admin
 wait_for_health
 
 mem_id="$($DOCKER_CMD ps --format '{{.ID}} {{.Names}}' | rg -i 'memory-service' | head -n1 | awk '{print $1}')"
@@ -183,11 +193,7 @@ echo "status=$code"
 expect_status "$code" "200" "/commit admin second request"
 
 echo "==> restore normal mode (no limits)"
-(
-  cd "$STACK_DIR" && \
-  ONTOGIT_DAILY_REQUEST_LIMIT= ONTOGIT_LIMIT_MODE= ONTOGIT_ADMIN_USERS= \
-  $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
-)
+maybe_recreate_memory_service env ONTOGIT_DAILY_REQUEST_LIMIT= ONTOGIT_LIMIT_MODE= ONTOGIT_ADMIN_USERS=
 wait_for_health
 
 echo "==> last 5 usage events"

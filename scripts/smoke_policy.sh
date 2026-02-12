@@ -5,6 +5,7 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 POLICY_HOST_PATH="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 TMP_DIR="/tmp/ontogit_smoke_policy"
 mkdir -p "${TMP_DIR}"
+SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -48,13 +49,29 @@ restore_policy() {
 
 cleanup() {
   restore_policy
-  (
-    cd "${STACK_DIR}" && \
-    ONTOGIT_LIMIT_MODE=soft \
-    $DOCKER_CMD compose up -d --force-recreate usage-writer memory-service >/dev/null
-  ) || true
+  if [ "${SMOKE_NO_RECREATE}" != "1" ]; then
+    (
+      cd "${STACK_DIR}" && \
+      ONTOGIT_LIMIT_MODE=soft \
+      $DOCKER_CMD compose up -d --force-recreate usage-writer memory-service >/dev/null
+    ) || true
+  fi
 }
 trap cleanup EXIT
+
+maybe_recreate() {
+  local mode="$1"
+  shift
+  if [ "${SMOKE_NO_RECREATE}" = "1" ]; then
+    echo "SMOKE_NO_RECREATE=1: skipping recreate for $* (requested mode=${mode})"
+    return 0
+  fi
+  (
+    cd "${STACK_DIR}" && \
+    ONTOGIT_LIMIT_MODE="${mode}" \
+    $DOCKER_CMD compose up -d --force-recreate "$@"
+  )
+}
 
 cat > "${POLICY_HOST_PATH}" <<'YAML'
 version: 1
@@ -126,11 +143,7 @@ BASIC_USER="policy_basic_${TS}"
 PRO_USER="policy_pro_${TS}"
 
 echo "==> recreate usage-writer + memory-service with policy file"
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_LIMIT_MODE=soft \
-  $DOCKER_CMD compose up -d --force-recreate usage-writer memory-service
-)
+maybe_recreate soft usage-writer memory-service
 
 wait_http "${BASE_URL}/health"
 wait_http "http://127.0.0.1:8091/limits/ping"
@@ -152,11 +165,7 @@ rg -qi '^X-Ontogit-Warn:.*quota_exceeded' "${TMP_DIR}/soft_b.headers" || { echo 
 
 echo "==> hard mode check: second basic request returns 429"
 HARD_USER="policy_hard_${TS}"
-(
-  cd "${STACK_DIR}" && \
-  ONTOGIT_LIMIT_MODE=hard \
-  $DOCKER_CMD compose up -d --force-recreate memory-service
-)
+maybe_recreate hard memory-service
 wait_http "${BASE_URL}/health"
 
 code="$(curl -s -o "${TMP_DIR}/hard_a.json" -w '%{http_code}' -H "X-Ontos-Service-Auth: ${SERVICE_SECRET}" -H "X-Ontogit-User: ${HARD_USER}" -H 'Content-Type: application/json' -d '{"title":"hard-a","body":"hard-a"}' "${BASE_URL}/commit")"
