@@ -1,8 +1,36 @@
 from fastapi import FastAPI, Request, Response
-import httpx, os, json, time
+from fastapi.responses import JSONResponse
+import httpx, os, json, time, logging
+from urllib.parse import urlparse
 from common.policy import load_policy, get_user_role
 
-OPENAI_BASE = os.environ.get("OPENAI_BASE", "https://api.openai.com")
+logger = logging.getLogger("openai-proxy")
+
+
+def _normalize_upstream_base(raw: str) -> str:
+    base = (raw or "").strip().rstrip("/")
+    if not base:
+        return "https://api.openai.com/v1"
+    if base.endswith("/v1"):
+        return base
+    return f"{base}/v1"
+
+
+def _build_upstream_url(base: str, path: str) -> str:
+    clean_path = (path or "").lstrip("/")
+    if base.endswith("/v1") and (clean_path == "v1" or clean_path.startswith("v1/")):
+        clean_path = clean_path[3:] if clean_path.startswith("v1/") else ""
+    clean_path = clean_path.lstrip("/")
+    return base if not clean_path else f"{base}/{clean_path}"
+
+
+OPENAI_BASE = _normalize_upstream_base(
+    os.environ.get("OPENAI_API_BASE_URL")
+    or os.environ.get("UPSTREAM")
+    or os.environ.get("TARGET_BASE_URL")
+    or os.environ.get("OPENAI_BASE")
+    or "https://api.openai.com/v1"
+)
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY", "")
 DEV_FALLBACK_USER_ID = os.environ.get(
     "ONTOGIT_DEV_FALLBACK_USER_ID",
@@ -87,7 +115,7 @@ def _resolve_user_id(req: Request) -> str | None:
 
 @app.api_route("/{path:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
 async def proxy(path: str, req: Request):
-    url = f"{OPENAI_BASE}/{path}"
+    url = _build_upstream_url(OPENAI_BASE, path)
 
     # прокидываем минимум нужного
     headers = {}
@@ -150,13 +178,43 @@ async def proxy(path: str, req: Request):
                 headers=limit_headers,
             )
 
-    async with httpx.AsyncClient(timeout=None) as client:
-        upstream = await client.request(
-            req.method,
-            url,
-            params=dict(req.query_params),
-            content=body if body else None,
-            headers=headers,
+    upstream_host = urlparse(url).hostname or "unknown"
+    try:
+        async with httpx.AsyncClient(timeout=None) as client:
+            upstream = await client.request(
+                req.method,
+                url,
+                params=dict(req.query_params),
+                content=body if body else None,
+                headers=headers,
+            )
+    except httpx.ConnectError:
+        logger.error("upstream_connect_error host=%s code=connect_error", upstream_host)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "type": "upstream_connect_error",
+                    "code": "connect_error",
+                    "hostname": upstream_host,
+                    "message": "Upstream is unreachable",
+                }
+            },
+            headers=limit_headers,
+        )
+    except httpx.HTTPError:
+        logger.error("upstream_http_error host=%s code=http_error", upstream_host)
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "type": "upstream_http_error",
+                    "code": "http_error",
+                    "hostname": upstream_host,
+                    "message": "Upstream request failed",
+                }
+            },
+            headers=limit_headers,
         )
 
     resp_bytes = upstream.content

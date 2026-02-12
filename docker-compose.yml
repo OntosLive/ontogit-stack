@@ -24,7 +24,7 @@ services:
     env_file:
     - .env
     environment:
-    - OPENAI_BASE=https://api.openai.com
+    - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
     - USAGE_WRITER_URL=http://usage-writer:8091/usage
     - USAGE_WRITER_BASE=http://usage-writer:8091
     - FORCE_NON_STREAM=1
