@@ -12,19 +12,27 @@ DOCKER=()
 pick_docker() {
   if docker ps >/dev/null 2>&1; then
     DOCKER=(docker)
+    echo "docker runner: docker"
     return 0
   fi
-  local -a sudo_runner=(sudo -n env)
-  if [ -n "${DOCKER_HOST:-}" ]; then
-    sudo_runner+=("DOCKER_HOST=${DOCKER_HOST}")
-  fi
-  if [ -n "${DOCKER_CONTEXT:-}" ]; then
-    sudo_runner+=("DOCKER_CONTEXT=${DOCKER_CONTEXT}")
-  fi
-  if "${sudo_runner[@]}" docker ps >/dev/null 2>&1; then
-    DOCKER=("${sudo_runner[@]}" docker)
-    echo "Using sudo -n docker"
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER=(sudo -n docker)
+    echo "docker runner: sudo -n docker"
     return 0
+  fi
+  if [ -n "${DOCKER_HOST:-}" ] || [ -n "${DOCKER_CONTEXT:-}" ]; then
+    local -a sudo_runner=(sudo -n env)
+    if [ -n "${DOCKER_HOST:-}" ]; then
+      sudo_runner+=("DOCKER_HOST=${DOCKER_HOST}")
+    fi
+    if [ -n "${DOCKER_CONTEXT:-}" ]; then
+      sudo_runner+=("DOCKER_CONTEXT=${DOCKER_CONTEXT}")
+    fi
+    if "${sudo_runner[@]}" docker ps >/dev/null 2>&1; then
+      DOCKER=("${sudo_runner[@]}" docker)
+      echo "docker runner: sudo -n env ... docker"
+      return 0
+    fi
   fi
   echo "docker ps failed; try: sudo usermod -aG docker ${USER:-$(id -un 2>/dev/null || echo your_user)} && newgrp docker"
   echo "WSL/Docker Desktop may still require sudo; scripts use sudo -n automatically when available."
