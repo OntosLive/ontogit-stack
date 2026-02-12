@@ -7,6 +7,13 @@ TS="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${STATE_DIR}/${TS}-govbundle"
 POLICY_SRC="/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml"
 KEEPALIVE_PID=""
+LOCK="/tmp/ontogit_snapshot_governance_bundle.lock"
+
+exec 9>"${LOCK}"
+if ! flock -n 9; then
+  echo "snapshot already running (lock: ${LOCK})"
+  exit 1
+fi
 
 mkdir -p "${OUT_DIR}"
 
