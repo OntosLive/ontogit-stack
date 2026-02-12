@@ -81,7 +81,7 @@ def _build_limit_headers(limit_state: dict | None) -> dict[str, str]:
     used_usd = float(limit_state.get("used_usd") or 0.0)
     warn_70 = float(limit_state.get("warn_70") or 0.7)
     warn_90 = float(limit_state.get("warn_90") or 0.9)
-    role = str(limit_state.get("role") or "basic")
+    role = str(limit_state.get("role", "") or "")
     warn_level = "none"
     if limit_usd > 0:
         ratio = used_usd / limit_usd
