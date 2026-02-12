@@ -7,16 +7,22 @@ TMP_DIR="/tmp/ontogit_smoke_policy"
 mkdir -p "${TMP_DIR}"
 SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
-DOCKER_CMD="docker"
-if ! docker ps >/dev/null 2>&1; then
-  if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -E docker"
-    echo "Using sudo docker (password may be required)"
-  else
-    echo "Docker is not accessible (direct or via sudo)."
-    exit 1
+DOCKER=()
+pick_docker() {
+  if docker ps >/dev/null 2>&1; then
+    DOCKER=(docker)
+    return 0
   fi
-fi
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER=(sudo -n docker)
+    echo "Using sudo -n docker"
+    return 0
+  fi
+  echo "docker ps failed; try: sudo usermod -aG docker ${USER:-$(id -un 2>/dev/null || echo your_user)} && newgrp docker"
+  echo "WSL/Docker Desktop may still require sudo; scripts use sudo -n automatically when available."
+  return 1
+}
+pick_docker || exit 1
 
 ENV_FILE="${STACK_DIR}/.env.local"
 if [ -f "${ENV_FILE}" ]; then
@@ -53,7 +59,7 @@ cleanup() {
     (
       cd "${STACK_DIR}" && \
       ONTOGIT_LIMIT_MODE=soft \
-      $DOCKER_CMD compose up -d --force-recreate usage-writer memory-service >/dev/null
+      "${DOCKER[@]}" compose up -d --force-recreate usage-writer memory-service >/dev/null
     ) || true
   fi
 }
@@ -69,7 +75,7 @@ maybe_recreate() {
   (
     cd "${STACK_DIR}" && \
     ONTOGIT_LIMIT_MODE="${mode}" \
-    $DOCKER_CMD compose up -d --force-recreate "$@"
+    "${DOCKER[@]}" compose up -d --force-recreate "$@"
   )
 }
 

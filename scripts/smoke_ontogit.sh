@@ -13,17 +13,26 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WARN_USER_MISSING="User id not propagated; usage will be aggregated"
 SMOKE_NO_RECREATE="${SMOKE_NO_RECREATE:-0}"
 
-DOCKER_CMD="docker"
-if ! docker ps >/dev/null 2>&1; then
-  if sudo -n docker ps >/dev/null 2>&1 || sudo -E docker ps >/dev/null 2>&1; then
-    DOCKER_CMD="sudo -E docker"
-    echo "Using sudo docker (password may be required)"
+DOCKER=()
+pick_docker() {
+  if docker ps >/dev/null 2>&1; then
+    DOCKER=(docker)
+    return 0
   fi
-fi
+  if sudo -n docker ps >/dev/null 2>&1; then
+    DOCKER=(sudo -n docker)
+    echo "Using sudo -n docker"
+    return 0
+  fi
+  echo "docker ps failed; try: sudo usermod -aG docker ${USER:-$(id -un 2>/dev/null || echo your_user)} && newgrp docker"
+  echo "WSL/Docker Desktop may still require sudo; scripts use sudo -n automatically when available."
+  return 1
+}
+pick_docker || exit 1
 
 ENV_FILE="${STACK_DIR}/.env.local"
 ENV_ARGS=()
-if $DOCKER_CMD compose --help 2>/dev/null | rg -q -- '--env-file'; then
+if "${DOCKER[@]}" compose --help 2>/dev/null | rg -q -- '--env-file'; then
   ENV_ARGS=(--env-file "$ENV_FILE")
 else
   if [ -f "$ENV_FILE" ]; then
@@ -92,7 +101,7 @@ maybe_recreate_memory_service() {
   fi
   (
     cd "$STACK_DIR" && \
-    "$@" $DOCKER_CMD compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
+    "$@" "${DOCKER[@]}" compose "${ENV_ARGS[@]}" up -d --force-recreate memory-service
   )
 }
 
@@ -157,12 +166,12 @@ echo "==> recreate memory-service with hard limits"
 maybe_recreate_memory_service env ONTOGIT_DAILY_REQUEST_LIMIT=1 ONTOGIT_LIMIT_MODE=hard ONTOGIT_ADMIN_USERS=admin
 wait_for_health
 
-mem_id="$($DOCKER_CMD ps --format '{{.ID}} {{.Names}}' | rg -i 'memory-service' | head -n1 | awk '{print $1}')"
+mem_id="$("${DOCKER[@]}" ps --format '{{.ID}} {{.Names}}' | rg -i 'memory-service' | head -n1 | awk '{print $1}')"
 if [ -z "$mem_id" ]; then
   echo "memory-service container not found"
   exit 1
 fi
-if ! $DOCKER_CMD exec "$mem_id" env | rg -q '^ONTOGIT_DAILY_REQUEST_LIMIT=1$'; then
+if ! "${DOCKER[@]}" exec "$mem_id" env | rg -q '^ONTOGIT_DAILY_REQUEST_LIMIT=1$'; then
   echo "memory-service missing ONTOGIT_DAILY_REQUEST_LIMIT=1 after recreate"
   exit 1
 fi
