@@ -89,6 +89,14 @@ AUTO_ROLLBACK=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke
 - `/home/ontoslive/ontos_data/ontogit-user` → `/ontogit_user` (usage.db)
 - `/home/ontoslive/ontos_data/openwebui-data` → `/app/backend/data`
 
+## OpenWebUI runtime image (version source of truth)
+- The frontend `package.json` version may differ from the backend banner; runtime is defined by the Docker image tag.
+- Current image tag: `open-webui-ontogate:5f3b84105`
+- Run (pins the runtime image via compose override):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui
+```
+
 ## If you're a new executor
 1) Read this `START_HERE.md`
 2) Read `docs/ONTOGIT_CANON.md`

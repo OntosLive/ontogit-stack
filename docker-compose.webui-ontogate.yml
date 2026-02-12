@@ -1,0 +1,22 @@
+services:
+  open-webui:
+    image: open-webui-ontogate:5f3b84105
+    networks:
+    - ontogit-stack_default
+    ports:
+    - 3000:8080
+    volumes:
+    - /home/ontoslive/ontos_data/openwebui-data-vps-current:/app/backend/data
+    environment:
+      OPENAI_API_BASE_URL: http://header-injector:8089
+      WHISPER_MODEL: large-v3
+      WHISPER_MODEL_DIR: /app/backend/data/cache/whisper/models
+      WHISPER_LANGUAGE_AUTO_IF_RU: 1
+      WHISPER_BEAM_SIZE: 8
+      WHISPER_TEMPERATURE: 0
+      WHISPER_BEST_OF: 5
+      WHISPER_INITIAL_PROMPT: ""
+
+networks:
+  ontogit-stack_default:
+    external: true
