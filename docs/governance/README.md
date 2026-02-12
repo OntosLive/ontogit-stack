@@ -64,7 +64,8 @@ docker compose up -d --force-recreate
 - `X-Ontogit-Limit-Used-Usd`
 - `X-Ontogit-Limit-Limit-Usd`
 - `X-Ontogit-Limit-Role`
-- `X-Ontogit-Limit-Warn` in `{none,70,90,exceeded}`
+- `X-Ontogit-Limit-Warn` in `{0,1}`
+- `X-Ontogit-Limit-Warn-Level` in `{none,warn_70,warn_90,exceeded}`
 ```bash
 ./scripts/smoke_enforcement_soft.sh
 ```

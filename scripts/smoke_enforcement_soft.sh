@@ -121,10 +121,11 @@ seed_usage() {
 assert_stage() {
   local user_id="$1"
   local expected_warn="$2"
-  local tag="$3"
+  local expected_warn_level="$3"
+  local tag="$4"
   local hdr="${TMP_DIR}/${tag}.headers"
   local body="${TMP_DIR}/${tag}.body"
-  local code warn role used limit
+  local code warn warn_level role used limit
 
   curl -sS -D "${hdr}" -o "${body}" --retry 25 --retry-delay 1 --retry-connrefused --max-time 5 \
     -H "Content-Type: application/json" \
@@ -134,6 +135,7 @@ assert_stage() {
 
   code="$(awk 'BEGIN{c=""} /^HTTP\/1/{c=$2} END{print c}' "${hdr}" 2>/dev/null || true)"
   warn="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Warn:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
+  warn_level="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Warn-Level:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
   role="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Role:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
   used="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Used-Usd:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
   limit="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Limit-Usd:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
@@ -150,6 +152,11 @@ assert_stage() {
   fi
   if [ "${warn}" != "${expected_warn}" ]; then
     echo "FAIL(${tag}): expected warn=${expected_warn}, got ${warn:-<missing>}"
+    sed -n '1,40p' "${hdr}" 2>/dev/null || true
+    exit 1
+  fi
+  if [ "${warn_level}" != "${expected_warn_level}" ]; then
+    echo "FAIL(${tag}): expected warn_level=${expected_warn_level}, got ${warn_level:-<missing>}"
     sed -n '1,40p' "${hdr}" 2>/dev/null || true
     exit 1
   fi
@@ -175,14 +182,14 @@ TEST_USER="enforce_soft_${TS}"
 
 echo "==> stage 70%"
 seed_usage "${TEST_USER}" "7.5"
-assert_stage "${TEST_USER}" "70" "stage70"
+assert_stage "${TEST_USER}" "1" "warn_70" "stage70"
 
 echo "==> stage 90%"
 seed_usage "${TEST_USER}" "2.0"
-assert_stage "${TEST_USER}" "90" "stage90"
+assert_stage "${TEST_USER}" "1" "warn_90" "stage90"
 
 echo "==> stage exceeded"
 seed_usage "${TEST_USER}" "1.5"
-assert_stage "${TEST_USER}" "exceeded" "stage_exceeded"
+assert_stage "${TEST_USER}" "1" "exceeded" "stage_exceeded"
 
 echo "OK: smoke_enforcement_soft passed"
