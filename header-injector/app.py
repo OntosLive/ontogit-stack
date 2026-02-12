@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import threading
+from pathlib import Path
 from urllib.parse import quote
 
 UPSTREAM = os.environ.get("OPENAI_PROXY_URL", "http://openai-proxy:8088")
@@ -16,6 +17,8 @@ FALLBACK_USER = os.environ.get(
     "ONTOGIT_DEV_FALLBACK_USER_ID",
     os.environ.get("ONTOGIT_FALLBACK_USER_ID", os.environ.get("FALLBACK_USER", "")),
 ).strip()
+METRICS_STATE_PATH = os.environ.get("METRICS_STATE_PATH", "/ontogit_user/metrics_state.json")
+METRICS_STATE_SAVE_EVERY = int(os.environ.get("METRICS_STATE_SAVE_EVERY", "10") or 10)
 
 app = FastAPI()
 log = logging.getLogger("header_injector")
@@ -23,6 +26,8 @@ METRICS_LOCK = threading.Lock()
 REQUESTS_TOTAL: dict[str, int] = {"soft": 0, "hard": 0}
 BLOCKED_TOTAL = 0
 WARN_TOTAL: dict[str, int] = {"none": 0, "70": 0, "90": 0, "exceeded": 0}
+METRICS_STATE_STOP = threading.Event()
+METRICS_STATE_THREAD: threading.Thread | None = None
 
 
 def _pick_first_header(req: Request, keys: list[str]) -> str | None:
@@ -128,6 +133,86 @@ def _inc_warn(level: str) -> None:
     l = level if level in ("none", "70", "90", "exceeded") else "none"
     with METRICS_LOCK:
         WARN_TOTAL[l] = int(WARN_TOTAL.get(l, 0)) + 1
+
+
+def _metrics_snapshot() -> dict:
+    with METRICS_LOCK:
+        return {
+            "version": 1,
+            "requests_total": {
+                "soft": int(REQUESTS_TOTAL.get("soft", 0)),
+                "hard": int(REQUESTS_TOTAL.get("hard", 0)),
+            },
+            "blocked_total": int(BLOCKED_TOTAL),
+            "warn_total": {
+                "none": int(WARN_TOTAL.get("none", 0)),
+                "70": int(WARN_TOTAL.get("70", 0)),
+                "90": int(WARN_TOTAL.get("90", 0)),
+                "exceeded": int(WARN_TOTAL.get("exceeded", 0)),
+            },
+        }
+
+
+def _load_metrics_state() -> None:
+    p = Path(METRICS_STATE_PATH)
+    if not p.is_file():
+        return
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or int(raw.get("version") or 0) != 1:
+            log.warning("metrics_state_load_skipped_invalid_version")
+            return
+        req = raw.get("requests_total") or {}
+        warn = raw.get("warn_total") or {}
+        blocked = int(raw.get("blocked_total") or 0)
+        with METRICS_LOCK:
+            REQUESTS_TOTAL["soft"] = int(req.get("soft") or 0)
+            REQUESTS_TOTAL["hard"] = int(req.get("hard") or 0)
+            WARN_TOTAL["none"] = int(warn.get("none") or 0)
+            WARN_TOTAL["70"] = int(warn.get("70") or 0)
+            WARN_TOTAL["90"] = int(warn.get("90") or 0)
+            WARN_TOTAL["exceeded"] = int(warn.get("exceeded") or 0)
+            global BLOCKED_TOTAL
+            BLOCKED_TOTAL = blocked
+    except Exception:
+        log.warning("metrics_state_load_failed", exc_info=True)
+
+
+def _save_metrics_state() -> None:
+    p = Path(METRICS_STATE_PATH)
+    tmp = p.with_name(f"{p.name}.tmp")
+    try:
+        payload = _metrics_snapshot()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        log.warning("metrics_state_save_failed", exc_info=True)
+
+
+def _metrics_state_loop() -> None:
+    interval = METRICS_STATE_SAVE_EVERY if METRICS_STATE_SAVE_EVERY > 0 else 10
+    while not METRICS_STATE_STOP.wait(interval):
+        _save_metrics_state()
+
+
+@app.on_event("startup")
+def _startup_metrics_state() -> None:
+    global METRICS_STATE_THREAD
+    _load_metrics_state()
+    METRICS_STATE_STOP.clear()
+    t = threading.Thread(target=_metrics_state_loop, name="metrics-state-saver", daemon=True)
+    t.start()
+    METRICS_STATE_THREAD = t
+
+
+@app.on_event("shutdown")
+def _shutdown_metrics_state() -> None:
+    METRICS_STATE_STOP.set()
+    t = METRICS_STATE_THREAD
+    if t is not None:
+        t.join(timeout=2.0)
+    _save_metrics_state()
 
 
 @app.get("/metrics")
