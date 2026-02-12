@@ -3,6 +3,7 @@ import os
 import httpx
 import asyncio
 import json
+import logging
 from urllib.parse import quote
 
 UPSTREAM = os.environ.get("OPENAI_PROXY_URL", "http://openai-proxy:8088")
@@ -16,6 +17,7 @@ FALLBACK_USER = os.environ.get(
 ).strip()
 
 app = FastAPI()
+log = logging.getLogger("header_injector")
 
 
 def _pick_first_header(req: Request, keys: list[str]) -> str | None:
@@ -145,9 +147,14 @@ async def proxy(path: str, req: Request):
             headers=headers,
         )
 
+    response_status = upstream.status_code
+    if LIMIT_MODE == "soft" and response_status == 429:
+        response_status = 200
+        log.warning("soft_mode_no_block: rewrote upstream 429 to 200")
+
     return Response(
         content=upstream.content,
-        status_code=upstream.status_code,
+        status_code=response_status,
         media_type=upstream.headers.get("content-type"),
         headers=_build_limit_headers(limit_state) if LIMIT_MODE == "soft" else {},
     )
