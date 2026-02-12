@@ -20,9 +20,14 @@ pick_docker() {
     echo "docker runner: docker"
     return 0
   fi
+  if sudo -n env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_CONFIG docker ps >/dev/null 2>&1; then
+    DOCKER=(sudo -n env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_CONFIG docker)
+    echo "docker runner: sudo-clean"
+    return 0
+  fi
   if sudo -n docker ps >/dev/null 2>&1; then
     DOCKER=(sudo -n docker)
-    echo "docker runner: sudo -n docker"
+    echo "docker runner: sudo-plain"
     return 0
   fi
   if [ -n "${DOCKER_HOST:-}" ] || [ -n "${DOCKER_CONTEXT:-}" ]; then
@@ -35,7 +40,7 @@ pick_docker() {
     fi
     if "${sudo_runner[@]}" docker ps >/dev/null 2>&1; then
       DOCKER=("${sudo_runner[@]}" docker)
-      echo "docker runner: sudo -n env ... docker"
+      echo "docker runner: sudo-preserved"
       return 0
     fi
   fi
