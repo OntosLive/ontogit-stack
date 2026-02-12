@@ -58,6 +58,17 @@ docker compose up -d --force-recreate
 ```
 - Verify restart logs do not contain runtime `pip install` for `usage-writer`, `header-injector`, `openai-proxy`.
 
+## Soft Mode
+- `ONTOGIT_LIMIT_MODE=soft` forwards requests and never blocks.
+- Response headers contract:
+- `X-Ontogit-Limit-Used-Usd`
+- `X-Ontogit-Limit-Limit-Usd`
+- `X-Ontogit-Limit-Role`
+- `X-Ontogit-Limit-Warn` in `{none,70,90,exceeded}`
+```bash
+./scripts/smoke_enforcement_soft.sh
+```
+
 ## Precedence Test
 - Use `test@test.ru` for precedence verification.
 - Put this user in BOTH groups: `role:admin` and `role:pro`.

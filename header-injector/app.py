@@ -81,17 +81,22 @@ def _build_limit_headers(limit_state: dict | None) -> dict[str, str]:
     used_usd = float(limit_state.get("used_usd") or 0.0)
     warn_70 = float(limit_state.get("warn_70") or 0.7)
     warn_90 = float(limit_state.get("warn_90") or 0.9)
+    role = str(limit_state.get("role") or "basic")
+    warn_level = "none"
+    if limit_usd > 0:
+        ratio = used_usd / limit_usd
+        if used_usd >= limit_usd:
+            warn_level = "exceeded"
+        elif ratio >= warn_90:
+            warn_level = "90"
+        elif ratio >= warn_70:
+            warn_level = "70"
     headers = {
         "X-Ontogit-Limit-Used-Usd": f"{used_usd:.6f}",
         "X-Ontogit-Limit-Limit-Usd": f"{limit_usd:.6f}",
+        "X-Ontogit-Limit-Role": role,
+        "X-Ontogit-Limit-Warn": warn_level,
     }
-    if limit_usd > 0:
-        if used_usd >= limit_usd * warn_90:
-            headers["X-Ontogit-Limit-Warn"] = "1"
-            headers["X-Ontogit-Limit-Warn-Level"] = "warn_90"
-        elif used_usd >= limit_usd * warn_70:
-            headers["X-Ontogit-Limit-Warn"] = "1"
-            headers["X-Ontogit-Limit-Warn-Level"] = "warn_70"
     return headers
 
 
