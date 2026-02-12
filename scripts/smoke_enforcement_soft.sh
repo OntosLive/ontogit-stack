@@ -127,6 +127,30 @@ assert_stage() {
   local body="${TMP_DIR}/${tag}.body"
   local code warn warn_level role used limit
 
+  get_header_value() {
+    local file="$1"
+    local name="$2"
+    awk -v key="$(printf '%s' "${name}" | tr '[:upper:]' '[:lower:]')" '
+      {
+        line=$0
+        gsub(/\r$/, "", line)
+        low=line
+        for (i=1; i<=length(low); i++) {
+          c=substr(low,i,1)
+          if (c >= "A" && c <= "Z") {
+            low=substr(low,1,i-1) tolower(c) substr(low,i+1)
+          }
+        }
+        if (index(low, key ":") == 1) {
+          val=substr(line, length(key) + 2)
+          sub(/^[[:space:]]+/, "", val)
+          print val
+          exit
+        }
+      }
+    ' "${file}" 2>/dev/null || true
+  }
+
   curl -sS -D "${hdr}" -o "${body}" --retry 25 --retry-delay 1 --retry-connrefused --max-time 5 \
     -H "Content-Type: application/json" \
     -H "X-OpenWebUI-User-Id: ${user_id}" \
@@ -134,11 +158,11 @@ assert_stage() {
     "http://127.0.0.1:${HI_PORT}/v1/chat/completions" >/dev/null 2>&1 || true
 
   code="$(awk 'BEGIN{c=""} /^HTTP\/1/{c=$2} END{print c}' "${hdr}" 2>/dev/null || true)"
-  warn="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Warn:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
-  warn_level="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Warn-Level:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
-  role="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Role:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
-  used="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Used-Usd:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
-  limit="$(awk 'BEGIN{IGNORECASE=1} /^X-Ontogit-Limit-Limit-Usd:/{sub(/\r$/, "", $2); print $2; exit}' "${hdr}" 2>/dev/null || true)"
+  warn="$(get_header_value "${hdr}" "x-ontogit-limit-warn")"
+  warn_level="$(get_header_value "${hdr}" "x-ontogit-limit-warn-level")"
+  role="$(get_header_value "${hdr}" "x-ontogit-limit-role")"
+  used="$(get_header_value "${hdr}" "x-ontogit-limit-used-usd")"
+  limit="$(get_header_value "${hdr}" "x-ontogit-limit-limit-usd")"
 
   if [ -z "${code}" ]; then
     echo "FAIL(${tag}): missing HTTP code"
