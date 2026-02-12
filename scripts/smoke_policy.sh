@@ -13,8 +13,15 @@ pick_docker() {
     DOCKER=(docker)
     return 0
   fi
-  if sudo -n docker ps >/dev/null 2>&1; then
-    DOCKER=(sudo -n docker)
+  local -a sudo_runner=(sudo -n env)
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    sudo_runner+=("DOCKER_HOST=${DOCKER_HOST}")
+  fi
+  if [ -n "${DOCKER_CONTEXT:-}" ]; then
+    sudo_runner+=("DOCKER_CONTEXT=${DOCKER_CONTEXT}")
+  fi
+  if "${sudo_runner[@]}" docker ps >/dev/null 2>&1; then
+    DOCKER=("${sudo_runner[@]}" docker)
     echo "Using sudo -n docker"
     return 0
   fi
