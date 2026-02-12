@@ -121,11 +121,10 @@ seed_usage() {
 assert_stage() {
   local user_id="$1"
   local expected_warn="$2"
-  local expected_warn_level="$3"
-  local tag="$4"
+  local tag="$3"
   local hdr="${TMP_DIR}/${tag}.headers"
   local body="${TMP_DIR}/${tag}.body"
-  local code warn warn_level role used limit
+  local code warn role used limit
 
   get_header_value() {
     local file="$1"
@@ -159,7 +158,6 @@ assert_stage() {
 
   code="$(awk 'BEGIN{c=""} /^HTTP\/1/{c=$2} END{print c}' "${hdr}" 2>/dev/null || true)"
   warn="$(get_header_value "${hdr}" "x-ontogit-limit-warn")"
-  warn_level="$(get_header_value "${hdr}" "x-ontogit-limit-warn-level")"
   role="$(get_header_value "${hdr}" "x-ontogit-limit-role")"
   used="$(get_header_value "${hdr}" "x-ontogit-limit-used-usd")"
   limit="$(get_header_value "${hdr}" "x-ontogit-limit-limit-usd")"
@@ -176,11 +174,6 @@ assert_stage() {
   fi
   if [ "${warn}" != "${expected_warn}" ]; then
     echo "FAIL(${tag}): expected warn=${expected_warn}, got ${warn:-<missing>}"
-    sed -n '1,40p' "${hdr}" 2>/dev/null || true
-    exit 1
-  fi
-  if [ "${warn_level}" != "${expected_warn_level}" ]; then
-    echo "FAIL(${tag}): expected warn_level=${expected_warn_level}, got ${warn_level:-<missing>}"
     sed -n '1,40p' "${hdr}" 2>/dev/null || true
     exit 1
   fi
@@ -204,16 +197,19 @@ wait_header_injector_ready
 TS="$(date +%s)"
 TEST_USER="enforce_soft_${TS}"
 
+echo "==> stage none (<70%)"
+assert_stage "${TEST_USER}" "none" "stage_none"
+
 echo "==> stage 70%"
 seed_usage "${TEST_USER}" "7.5"
-assert_stage "${TEST_USER}" "1" "warn_70" "stage70"
+assert_stage "${TEST_USER}" "70" "stage70"
 
 echo "==> stage 90%"
 seed_usage "${TEST_USER}" "2.0"
-assert_stage "${TEST_USER}" "1" "warn_90" "stage90"
+assert_stage "${TEST_USER}" "90" "stage90"
 
 echo "==> stage exceeded"
 seed_usage "${TEST_USER}" "1.5"
-assert_stage "${TEST_USER}" "1" "exceeded" "stage_exceeded"
+assert_stage "${TEST_USER}" "exceeded" "stage_exceeded"
 
 echo "OK: smoke_enforcement_soft passed"
