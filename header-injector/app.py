@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import threading
+import hashlib
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,6 +14,8 @@ USAGE_WRITER_BASE = os.environ.get("USAGE_WRITER_BASE", "http://usage-writer:809
 USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limits")
 USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
 LIMIT_MODE = (os.environ.get("ONTOGIT_LIMIT_MODE", "soft") or "soft").strip().lower()
+RECALL_DEDUP = (os.environ.get("ONTOGIT_RECALL_DEDUP", "") or "").strip() == "1"
+RECALL_DEDUP_MAX = 50
 FALLBACK_USER = os.environ.get(
     "ONTOGIT_DEV_FALLBACK_USER_ID",
     os.environ.get("ONTOGIT_FALLBACK_USER_ID", os.environ.get("FALLBACK_USER", "")),
@@ -28,6 +31,67 @@ BLOCKED_TOTAL = 0
 WARN_TOTAL: dict[str, int] = {"none": 0, "70": 0, "90": 0, "exceeded": 0}
 METRICS_STATE_STOP = threading.Event()
 METRICS_STATE_THREAD: threading.Thread | None = None
+RECALL_DEDUP_LOCK = threading.Lock()
+RECALL_DEDUP_STATE: dict[str, list[str]] = {}
+
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    # Approximate tokens: 1 token ~= 4 chars
+    return max(1, int(len(text) / 4))
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+        return "\n".join([p for p in parts if p])
+    if isinstance(content, str):
+        return content
+    return ""
+
+
+def _messages_token_est(messages: list[dict]) -> int:
+    total = 0
+    for m in messages:
+        total += _estimate_tokens(_message_text(m))
+    return total
+
+
+def _extract_recall_block(text: str) -> tuple[str, int] | None:
+    if not text:
+        return None
+    markers = ["ontogit recall", "ontogit_recall", "recall:", "user context:"]
+    low = text.lower()
+    for marker in markers:
+        idx = low.find(marker)
+        if idx >= 0:
+            return text[idx:], idx
+    return None
+
+
+def _dedup_seen(conversation_id: str, recall_hash: str) -> bool:
+    if not conversation_id or not recall_hash or recall_hash == "none":
+        return False
+    with RECALL_DEDUP_LOCK:
+        history = RECALL_DEDUP_STATE.get(conversation_id)
+        if history is None:
+            RECALL_DEDUP_STATE[conversation_id] = [recall_hash]
+            return False
+        if recall_hash in history:
+            return True
+        history.append(recall_hash)
+        if len(history) > RECALL_DEDUP_MAX:
+            history[:] = history[-RECALL_DEDUP_MAX :]
+        return False
+
+
+def _recall_marker_text() -> str:
+    return "[OntoGit] recall already applied"
 
 
 def _pick_first_header(req: Request, keys: list[str]) -> str | None:
@@ -272,6 +336,82 @@ async def proxy(path: str, req: Request):
             )
 
     body = await req.body()
+    body_bytes = body
+    tokens_before = None
+    tokens_after = None
+    tokens_recall = None
+    recall_hash = "none"
+    conversation_id = (
+        _pick_first_header(
+            req,
+            [
+                "x-openwebui-chat-id",
+                "x-chat-id",
+                "x-conversation-id",
+                "x-openwebui-conversation-id",
+            ],
+        )
+        or "unknown"
+    )
+
+    if body and headers.get("content-type", "").startswith("application/json"):
+        try:
+            payload = await req.json()
+        except Exception:
+            payload = {}
+        payload = payload or {}
+        if isinstance(payload, dict):
+            model = payload.get("model")
+            messages = payload.get("messages")
+            if not model or not isinstance(messages, list):
+                pass
+            else:
+                tokens_after = _messages_token_est(messages)
+                recall_block = None
+                recall_msg_idx = None
+                recall_marker_idx = None
+
+                for i, m in enumerate(messages):
+                    if isinstance(m, dict) and m.get("role") == "system":
+                        text = _message_text(m)
+                        found = _extract_recall_block(text)
+                        if found:
+                            recall_block, recall_marker_idx = found
+                            recall_msg_idx = i
+                            break
+
+                if recall_block:
+                    tokens_recall = _estimate_tokens(recall_block)
+                    tokens_before = max(0, (tokens_after or 0) - tokens_recall)
+                    recall_hash = hashlib.sha256(recall_block.encode("utf-8")).hexdigest()
+
+                    if RECALL_DEDUP and _dedup_seen(conversation_id, recall_hash):
+                        # Replace recall block with minimal marker to prevent duplication
+                        original = _message_text(messages[recall_msg_idx])
+                        if recall_marker_idx is not None:
+                            new_text = original[:recall_marker_idx] + _recall_marker_text()
+                        else:
+                            new_text = _recall_marker_text()
+                        messages[recall_msg_idx]["content"] = new_text
+                        tokens_after = _messages_token_est(messages)
+                        tokens_recall = 0
+
+                if tokens_before is None:
+                    tokens_before = tokens_after
+                if tokens_recall is None:
+                    tokens_recall = 0
+
+                log.info(
+                    "ontogit_recall_diag conversation_id=%s tokens_before=%s tokens_recall_injected=%s tokens_after=%s recall_hash=%s",
+                    conversation_id,
+                    tokens_before,
+                    tokens_recall,
+                    tokens_after,
+                    recall_hash,
+                )
+
+                payload["messages"] = messages
+                body_bytes = json.dumps(payload).encode("utf-8")
     url = f"{UPSTREAM}/{path}"
 
     async with httpx.AsyncClient(timeout=None) as client:
@@ -279,7 +419,7 @@ async def proxy(path: str, req: Request):
             req.method,
             url,
             params=dict(req.query_params),
-            content=body if body else None,
+            content=body_bytes if body_bytes else None,
             headers=headers,
         )
 
