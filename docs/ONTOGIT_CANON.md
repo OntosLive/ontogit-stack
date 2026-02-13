@@ -197,6 +197,7 @@
 
 ## Policy-as-code v1 (optional)
 - Runtime path: `/home/ontoslive/ontos_data/ontogit-user/onto_policy.yml` (mounted as `/ontogit_user/onto_policy.yml`).
+- Canonical policy file: `policy/onto_policy.yml` (see `docs/QUOTAS.md`).
 - Example template: `policy/onto_policy.example.yml`.
 - If policy file is missing/invalid: behavior stays on existing env defaults (no change).
 - Roles: `basic` / `pro` / `admin`; user role resolves from `users.role` with `default_role` fallback.
