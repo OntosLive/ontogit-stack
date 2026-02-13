@@ -201,10 +201,18 @@ async def proxy(path: str, req: Request):
     # block only /v1/chat/completions when over limit
     if req.method.upper() == "POST" and path == "v1/chat/completions" and user_id:
         if limit_usd > 0 and used is not None and used >= limit_usd:
-            return Response(
-                content=json.dumps({"error": "limit_exceeded", "user_id": user_id, "used_usd": float(used or 0.0), "limit_usd": limit_usd}),
+            return JSONResponse(
                 status_code=429,
-                media_type="application/json",
+                content={
+                    "error": {
+                        "message": "Monthly quota exceeded",
+                        "type": "quota_exceeded",
+                        "code": "quota_exceeded",
+                        "user_id": user_id,
+                        "used_usd": float(used or 0.0),
+                        "limit_usd": float(limit_usd),
+                    }
+                },
                 headers=limit_headers,
             )
 
