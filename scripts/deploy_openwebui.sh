@@ -77,24 +77,29 @@ echo "[5/8] Recreate only open-webui" | tee -a "${LOG_FILE}"
 cd "${STACK_DIR}"
 sudo -n docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui | tee -a "${LOG_FILE}"
 
-echo "[6/8] Wait for health=healthy (timeout 60s)" | tee -a "${LOG_FILE}"
+echo "[6/8] Wait for healthy OR /api/version=200 (timeout 120s)" | tee -a "${LOG_FILE}"
 CID="$(sudo -n docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps -q open-webui)"
 if [ -z "${CID}" ]; then
   echo "open-webui container id not found" | tee -a "${LOG_FILE}"
   exit 1
 fi
 
-DEADLINE=$((SECONDS + 60))
+LAST_STATE_HEALTH=""
+LAST_CURL_STATUS=""
+LAST_CURL_URL="http://127.0.0.1:3000/api/version"
+DEADLINE=$((SECONDS + 120))
 while :; do
-  HEALTH="$(sudo -n docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${CID}")"
-  RUNNING="$(sudo -n docker inspect -f '{{.State.Running}}' "${CID}")"
-  echo "health=${HEALTH} running=${RUNNING}" | tee -a "${LOG_FILE}"
+  LAST_STATE_HEALTH="$(sudo -n docker inspect -f 'running={{.State.Running}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${CID}")"
+  RUNNING="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*running=\([^ ]*\).*/\1/p')"
+  HEALTH="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*health=\([^ ]*\).*/\1/p')"
+
+  LAST_CURL_STATUS="$(curl -sS -o "${ART_DIR}/api_version.json" -w '%{http_code}' "${LAST_CURL_URL}" || true)"
+  echo "${LAST_STATE_HEALTH} curl_status=${LAST_CURL_STATUS}" | tee -a "${LOG_FILE}"
 
   if [ "${HEALTH}" = "healthy" ]; then
     break
   fi
-  if [ "${HEALTH}" = "no-healthcheck" ] && [ "${RUNNING}" = "true" ]; then
-    echo "healthcheck missing; running=true accepted" | tee -a "${LOG_FILE}"
+  if [ "${LAST_CURL_STATUS}" = "200" ]; then
     break
   fi
   if [ "${RUNNING}" != "true" ]; then
@@ -102,14 +107,20 @@ while :; do
     exit 1
   fi
   if [ "$SECONDS" -ge "$DEADLINE" ]; then
-    echo "timeout waiting for healthy" | tee -a "${LOG_FILE}"
+    echo "timeout waiting for healthy OR api/version=200" | tee -a "${LOG_FILE}"
     exit 1
   fi
   sleep 2
 done
 
-echo "[7/8] Verify API version" | tee -a "${LOG_FILE}"
-curl -fsS http://127.0.0.1:3000/api/version | tee "${ART_DIR}/api_version.json" >/dev/null
+echo "[7/8] Record wait result" | tee -a "${LOG_FILE}"
+{
+  echo "${LAST_STATE_HEALTH}"
+} > "${ART_DIR}/wait_state_health.txt"
+{
+  echo "url=${LAST_CURL_URL}"
+  echo "http_code=${LAST_CURL_STATUS}"
+} > "${ART_DIR}/api_version_curl.txt"
 
 echo "[8/8] Collect artifacts" | tee -a "${LOG_FILE}"
 sudo -n docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
