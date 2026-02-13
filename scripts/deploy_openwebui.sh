@@ -12,6 +12,9 @@ PRE_FILE="${ART_DIR}/compose_pin_before.yml"
 POST_FILE="${ART_DIR}/compose_pin_after.yml"
 DIFF_FILE="${ART_DIR}/compose_pin.diff"
 LOG_FILE="${ART_DIR}/deploy.log"
+DOCKER_BIN=""
+DOCKER_CMD=()
+COMPOSE_CMD=()
 
 cleanup() {
   set +e
@@ -52,6 +55,24 @@ trap cleanup EXIT
 
 mkdir -p "${ART_DIR}"
 
+DOCKER_BIN="$(command -v docker || true)"
+if [ -z "${DOCKER_BIN}" ]; then
+  echo "docker not found in PATH" | tee -a "${LOG_FILE}"
+  exit 1
+fi
+
+DOCKER_CMD=("${DOCKER_BIN}")
+if ! "${DOCKER_CMD[@]}" ps >/dev/null 2>&1; then
+  echo "docker ps failed; falling back to sudo ${DOCKER_BIN} (Docker Desktop WSL should run docker as user; sudo may break socket/context)." | tee -a "${LOG_FILE}"
+  DOCKER_CMD=(sudo "${DOCKER_BIN}")
+fi
+
+COMPOSE_CMD=("${DOCKER_BIN}" "compose")
+if ! "${COMPOSE_CMD[@]}" version >/dev/null 2>&1; then
+  echo "docker compose failed without sudo; falling back to sudo ${DOCKER_BIN} compose." | tee -a "${LOG_FILE}"
+  COMPOSE_CMD=(sudo "${DOCKER_BIN}" "compose")
+fi
+
 echo "[1/8] Resolve commit ${COMMIT_REF}" | tee -a "${LOG_FILE}"
 RESOLVED_SHA="$(git -C "${WEBUI_SRC}" rev-parse --verify "${COMMIT_REF}^{commit}")"
 TAG="$(git -C "${WEBUI_SRC}" rev-parse --short=9 "${RESOLVED_SHA}")"
@@ -63,7 +84,7 @@ echo "[2/8] Create temporary worktree" | tee -a "${LOG_FILE}"
 git -C "${WEBUI_SRC}" worktree add --detach "${WORKTREE_DIR}" "${RESOLVED_SHA}" | tee -a "${LOG_FILE}"
 
 echo "[3/8] Build image ${IMAGE}" | tee -a "${LOG_FILE}"
-sudo -n docker build -t "${IMAGE}" "${WORKTREE_DIR}" | tee -a "${LOG_FILE}"
+"${DOCKER_CMD[@]}" build -t "${IMAGE}" "${WORKTREE_DIR}" | tee -a "${LOG_FILE}"
 
 echo "[4/8] Update compose pin in ${COMPOSE_PIN_FILE}" | tee -a "${LOG_FILE}"
 cp "${COMPOSE_PIN_FILE}" "${PRE_FILE}"
@@ -75,10 +96,10 @@ grep -n "image:\s*open-webui-ontogate:" "${COMPOSE_PIN_FILE}" | tee -a "${LOG_FI
 
 echo "[5/8] Recreate only open-webui" | tee -a "${LOG_FILE}"
 cd "${STACK_DIR}"
-sudo -n docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui | tee -a "${LOG_FILE}"
+"${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui | tee -a "${LOG_FILE}"
 
 echo "[6/8] Wait for healthy OR /api/version=200 (timeout 120s)" | tee -a "${LOG_FILE}"
-CID="$(sudo -n docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps -q open-webui)"
+CID="$("${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps -q open-webui)"
 if [ -z "${CID}" ]; then
   echo "open-webui container id not found" | tee -a "${LOG_FILE}"
   exit 1
@@ -89,7 +110,7 @@ LAST_CURL_STATUS=""
 LAST_CURL_URL="http://127.0.0.1:3000/api/version"
 DEADLINE=$((SECONDS + 120))
 while :; do
-  LAST_STATE_HEALTH="$(sudo -n docker inspect -f 'running={{.State.Running}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${CID}")"
+  LAST_STATE_HEALTH="$("${DOCKER_CMD[@]}" inspect -f 'running={{.State.Running}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${CID}")"
   RUNNING="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*running=\([^ ]*\).*/\1/p')"
   HEALTH="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*health=\([^ ]*\).*/\1/p')"
 
@@ -123,9 +144,9 @@ echo "[7/8] Record wait result" | tee -a "${LOG_FILE}"
 } > "${ART_DIR}/api_version_curl.txt"
 
 echo "[8/8] Collect artifacts" | tee -a "${LOG_FILE}"
-sudo -n docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
-sudo -n docker inspect "${CID}" > "${ART_DIR}/openwebui_inspect.json"
-sudo -n docker images | grep 'open-webui-ontogate' > "${ART_DIR}/docker_images_openwebui_ontogate.txt" || true
+"${DOCKER_CMD[@]}" ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
+"${DOCKER_CMD[@]}" inspect "${CID}" > "${ART_DIR}/openwebui_inspect.json"
+"${DOCKER_CMD[@]}" images | grep 'open-webui-ontogate' > "${ART_DIR}/docker_images_openwebui_ontogate.txt" || true
 cat > "${ART_DIR}/how_to_repeat.txt" <<TXT
 COMMIT=<sha> ./scripts/deploy_openwebui.sh
 # or deploy current HEAD of open-webui-src:

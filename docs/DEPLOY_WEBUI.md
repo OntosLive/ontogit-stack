@@ -40,4 +40,4 @@ Each run writes:
 ## Notes
 - The script is idempotent for repeated deploys of the same commit.
 - Temporary worktree is always cleaned up (even on failure).
-- Requires non-interactive docker sudo (`sudo -n docker ...`).
+- Docker Desktop WSL: run docker as your user; sudo may break socket/context. The script prefers user docker and falls back to sudo only if needed.

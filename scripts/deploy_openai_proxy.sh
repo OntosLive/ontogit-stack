@@ -9,6 +9,9 @@ ART_DIR="${STACK_DIR}/ops/state/${TS}_deploy_openai_proxy"
 LOG_FILE="${ART_DIR}/deploy.log"
 WORKTREE_DIR=""
 WORKTREE_CREATED=0
+DOCKER_BIN=""
+DOCKER_CMD=()
+COMPOSE_CMD=()
 
 beep_fallback() {
   printf '\a' || true
@@ -59,6 +62,24 @@ trap cleanup EXIT
 
 mkdir -p "${ART_DIR}"
 
+DOCKER_BIN="$(command -v docker || true)"
+if [ -z "${DOCKER_BIN}" ]; then
+  echo "docker not found in PATH" | tee -a "${LOG_FILE}"
+  exit 1
+fi
+
+DOCKER_CMD=("${DOCKER_BIN}")
+if ! "${DOCKER_CMD[@]}" ps >/dev/null 2>&1; then
+  echo "docker ps failed; falling back to sudo ${DOCKER_BIN} (Docker Desktop WSL should run docker as user; sudo may break socket/context)." | tee -a "${LOG_FILE}"
+  DOCKER_CMD=(sudo "${DOCKER_BIN}")
+fi
+
+COMPOSE_CMD=("${DOCKER_BIN}" "compose")
+if ! "${COMPOSE_CMD[@]}" version >/dev/null 2>&1; then
+  echo "docker compose failed without sudo; falling back to sudo ${DOCKER_BIN} compose." | tee -a "${LOG_FILE}"
+  COMPOSE_CMD=(sudo "${DOCKER_BIN}" "compose")
+fi
+
 echo "[1/8] Resolve commit ${COMMIT_REF}" | tee -a "${LOG_FILE}"
 RESOLVED_SHA="$(git -C "${STACK_DIR}" rev-parse --verify "${COMMIT_REF}^{commit}")"
 SHORT_SHA="$(git -C "${STACK_DIR}" rev-parse --short=9 "${RESOLVED_SHA}")"
@@ -72,31 +93,31 @@ echo "[2/8] Build image for openai-proxy" | tee -a "${LOG_FILE}"
 if [ "${RESOLVED_SHA}" = "${CURRENT_HEAD}" ]; then
   (
     cd "${STACK_DIR}"
-    sudo -n docker compose -f docker-compose.yml build openai-proxy
+    "${COMPOSE_CMD[@]}" -f docker-compose.yml build openai-proxy
   ) | tee -a "${LOG_FILE}"
   # Explicit tag for traceability.
-  sudo -n docker build -f "${STACK_DIR}/openai-proxy/Dockerfile" -t "${IMAGE_TAG}" "${STACK_DIR}" | tee -a "${LOG_FILE}"
+  "${DOCKER_CMD[@]}" build -f "${STACK_DIR}/openai-proxy/Dockerfile" -t "${IMAGE_TAG}" "${STACK_DIR}" | tee -a "${LOG_FILE}"
 else
   WORKTREE_DIR="$(mktemp -d /tmp/ontogit_stack_openai_proxy.XXXXXX)"
   git -C "${STACK_DIR}" worktree add --detach "${WORKTREE_DIR}" "${RESOLVED_SHA}" | tee -a "${LOG_FILE}"
   WORKTREE_CREATED=1
-  sudo -n docker build -f "${WORKTREE_DIR}/openai-proxy/Dockerfile" -t "${IMAGE_TAG}" "${WORKTREE_DIR}" | tee -a "${LOG_FILE}"
+  "${DOCKER_CMD[@]}" build -f "${WORKTREE_DIR}/openai-proxy/Dockerfile" -t "${IMAGE_TAG}" "${WORKTREE_DIR}" | tee -a "${LOG_FILE}"
   # Force compose service image to use exact commit build without changing compose files.
-  sudo -n docker tag "${IMAGE_TAG}" "ontogit-stack-openai-proxy:latest" | tee -a "${LOG_FILE}" >/dev/null
+  "${DOCKER_CMD[@]}" tag "${IMAGE_TAG}" "ontogit-stack-openai-proxy:latest" | tee -a "${LOG_FILE}" >/dev/null
 fi
 
 echo "[3/8] Restart only openai-proxy" | tee -a "${LOG_FILE}"
 (
   cd "${STACK_DIR}"
   if [ "${RESOLVED_SHA}" = "${CURRENT_HEAD}" ]; then
-    sudo -n docker compose -f docker-compose.yml up -d --no-deps --build openai-proxy
+    "${COMPOSE_CMD[@]}" -f docker-compose.yml up -d --no-deps --build openai-proxy
   else
-    sudo -n docker compose -f docker-compose.yml up -d --no-deps --no-build openai-proxy
+    "${COMPOSE_CMD[@]}" -f docker-compose.yml up -d --no-deps --no-build openai-proxy
   fi
 ) | tee -a "${LOG_FILE}"
 
 echo "[4/8] Wait for running/healthy (timeout 90s)" | tee -a "${LOG_FILE}"
-CID="$(sudo -n docker compose -f "${STACK_DIR}/docker-compose.yml" ps -q openai-proxy)"
+CID="$("${COMPOSE_CMD[@]}" -f "${STACK_DIR}/docker-compose.yml" ps -q openai-proxy)"
 if [ -z "${CID}" ]; then
   echo "openai-proxy container id not found" | tee -a "${LOG_FILE}"
   exit 1
@@ -104,8 +125,8 @@ fi
 
 DEADLINE=$((SECONDS + 90))
 while :; do
-  HEALTH="$(sudo -n docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${CID}")"
-  RUNNING="$(sudo -n docker inspect -f '{{.State.Running}}' "${CID}")"
+  HEALTH="$("${DOCKER_CMD[@]}" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "${CID}")"
+  RUNNING="$("${DOCKER_CMD[@]}" inspect -f '{{.State.Running}}' "${CID}")"
   echo "health=${HEALTH} running=${RUNNING}" | tee -a "${LOG_FILE}"
 
   if [ "${HEALTH}" = "healthy" ]; then
@@ -126,7 +147,7 @@ while :; do
 done
 
 echo "[5/8] Determine host port" | tee -a "${LOG_FILE}"
-PORT_MAP="$(sudo -n docker port "${CID}" 8088/tcp 2>/dev/null | head -n1 || true)"
+PORT_MAP="$("${DOCKER_CMD[@]}" port "${CID}" 8088/tcp 2>/dev/null | head -n1 || true)"
 if [ -n "${PORT_MAP}" ]; then
   HOST_PORT="$(echo "${PORT_MAP}" | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
 else
@@ -148,12 +169,12 @@ if [ "${SMOKE_CODE}" != "200" ]; then
 fi
 
 echo "[7/8] Collect artifacts" | tee -a "${LOG_FILE}"
-sudo -n docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
-sudo -n docker logs --tail 200 "${CID}" > "${ART_DIR}/docker_logs_tail.txt" 2>&1 || true
+"${DOCKER_CMD[@]}" ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
+"${DOCKER_CMD[@]}" logs --tail 200 "${CID}" > "${ART_DIR}/docker_logs_tail.txt" 2>&1 || true
 {
   echo "container_id=${CID}"
-  echo "container_image=$(sudo -n docker inspect -f '{{.Config.Image}}' "${CID}")"
-  echo "image_id=$(sudo -n docker inspect -f '{{.Image}}' "${CID}")"
+  echo "container_image=$("${DOCKER_CMD[@]}" inspect -f '{{.Config.Image}}' "${CID}")"
+  echo "image_id=$("${DOCKER_CMD[@]}" inspect -f '{{.Image}}' "${CID}")"
   echo "deployed_tag=${IMAGE_TAG}"
   echo "resolved_sha=${RESOLVED_SHA}"
 } > "${ART_DIR}/docker_image.txt"

@@ -36,6 +36,9 @@ OPENAI_PROXY_PORT=8088 ./scripts/deploy_openai_proxy.sh
 - `how_to_repeat.txt`
 - `deploy.log`
 
+## Notes
+- Docker Desktop WSL: run docker as your user; sudo may break socket/context. The script prefers user docker and falls back to sudo only if needed.
+
 ## Verify manually
 ```bash
 curl -fsS http://127.0.0.1:8088/v1/models
