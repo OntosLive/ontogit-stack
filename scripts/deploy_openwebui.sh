@@ -15,6 +15,7 @@ LOG_FILE="${ART_DIR}/deploy.log"
 DOCKER_BIN=""
 DOCKER_CMD=()
 COMPOSE_CMD=()
+COMPOSE_ENV=()
 
 cleanup() {
   set +e
@@ -72,6 +73,9 @@ if ! "${COMPOSE_CMD[@]}" version >/dev/null 2>&1; then
   echo "docker compose failed without sudo; falling back to sudo ${DOCKER_BIN} compose." | tee -a "${LOG_FILE}"
   COMPOSE_CMD=(sudo "${DOCKER_BIN}" "compose")
 fi
+if [ -f "${STACK_DIR}/.env.local" ]; then
+  COMPOSE_ENV=(--env-file "${STACK_DIR}/.env.local")
+fi
 
 echo "[1/8] Resolve commit ${COMMIT_REF}" | tee -a "${LOG_FILE}"
 RESOLVED_SHA="$(git -C "${WEBUI_SRC}" rev-parse --verify "${COMMIT_REF}^{commit}")"
@@ -96,10 +100,19 @@ grep -n "image:\s*open-webui-ontogate:" "${COMPOSE_PIN_FILE}" | tee -a "${LOG_FI
 
 echo "[5/8] Recreate only open-webui" | tee -a "${LOG_FILE}"
 cd "${STACK_DIR}"
-"${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui | tee -a "${LOG_FILE}"
+PORT_HOGS="$("${DOCKER_CMD[@]}" ps --format '{{.Names}}\t{{.Ports}}' | awk -F'\t' '$2 ~ /0\\.0\\.0\\.0:3000->/ {print $1}')"
+if [ -n "${PORT_HOGS}" ]; then
+  for name in ${PORT_HOGS}; do
+    if [ "${name}" != "ontogit-stack-open-webui-1" ]; then
+      echo "stopping container holding 0.0.0.0:3000 -> ${name}" | tee -a "${LOG_FILE}"
+      "${DOCKER_CMD[@]}" stop "${name}" | tee -a "${LOG_FILE}"
+    fi
+  done
+fi
+"${COMPOSE_CMD[@]}" "${COMPOSE_ENV[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui | tee -a "${LOG_FILE}"
 
 echo "[6/8] Wait for healthy OR /api/version=200 (timeout 120s)" | tee -a "${LOG_FILE}"
-CID="$("${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps -q open-webui)"
+CID="$("${COMPOSE_CMD[@]}" "${COMPOSE_ENV[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps -q open-webui)"
 if [ -z "${CID}" ]; then
   echo "open-webui container id not found" | tee -a "${LOG_FILE}"
   exit 1
@@ -108,31 +121,41 @@ fi
 LAST_STATE_HEALTH=""
 LAST_CURL_STATUS=""
 LAST_CURL_URL="http://127.0.0.1:3000/api/version"
+READY_ERR_FILE="${ART_DIR}/ready_curl_err.txt"
+> "${READY_ERR_FILE}"
 DEADLINE=$((SECONDS + 120))
 while :; do
   LAST_STATE_HEALTH="$("${DOCKER_CMD[@]}" inspect -f 'running={{.State.Running}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "${CID}")"
   RUNNING="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*running=\([^ ]*\).*/\1/p')"
   HEALTH="$(echo "${LAST_STATE_HEALTH}" | sed -n 's/.*health=\([^ ]*\).*/\1/p')"
 
-  LAST_CURL_STATUS="$(curl -sS -o "${ART_DIR}/api_version.json" -w '%{http_code}' "${LAST_CURL_URL}" || true)"
-  echo "${LAST_STATE_HEALTH} curl_status=${LAST_CURL_STATUS}" | tee -a "${LOG_FILE}"
+  LAST_CURL_STATUS="$(curl -fsS -o "${ART_DIR}/api_version.json" -w '%{http_code}' "${LAST_CURL_URL}" 2>>"${READY_ERR_FILE}" || true)"
 
   if [ "${HEALTH}" = "healthy" ]; then
     break
   fi
-  if [ "${LAST_CURL_STATUS}" = "200" ]; then
-    break
+  if [ "${HEALTH}" = "none" ]; then
+    if [ "${LAST_CURL_STATUS}" = "200" ]; then
+      break
+    fi
+  else
+    if [ "${LAST_CURL_STATUS}" = "200" ]; then
+      break
+    fi
   fi
   if [ "${RUNNING}" != "true" ]; then
-    echo "container is not running" | tee -a "${LOG_FILE}"
+    echo "container is not running" >> "${LOG_FILE}"
+    echo "READY FAIL" | tee -a "${LOG_FILE}"
     exit 1
   fi
   if [ "$SECONDS" -ge "$DEADLINE" ]; then
-    echo "timeout waiting for healthy OR api/version=200" | tee -a "${LOG_FILE}"
+    echo "timeout waiting for healthy OR api/version=200" >> "${LOG_FILE}"
+    echo "READY FAIL" | tee -a "${LOG_FILE}"
     exit 1
   fi
   sleep 2
 done
+echo "READY OK" | tee -a "${LOG_FILE}"
 
 echo "[7/8] Record wait result" | tee -a "${LOG_FILE}"
 {
