@@ -159,14 +159,17 @@ fi
 echo "host_port=${HOST_PORT}" | tee -a "${LOG_FILE}"
 
 echo "[6/8] Smoke /v1/models" | tee -a "${LOG_FILE}"
+sleep 2
 SMOKE_HOST="127.0.0.1"
 SMOKE_PORT="${HOST_PORT:-${OPENAI_PROXY_PORT}}"
 SMOKE_URL="http://${SMOKE_HOST}:${SMOKE_PORT}/v1/models"
 echo "url=${SMOKE_URL}" > "${ART_DIR}/smoke_http.txt"
+SMOKE_ERR_FILE="${ART_DIR}/smoke_curl_err.txt"
+> "${SMOKE_ERR_FILE}"
 SMOKE_CODE=""
 SMOKE_OK=0
 for i in $(seq 1 10); do
-  SMOKE_CODE="$(curl -sS -o "${ART_DIR}/smoke_body.json" -w '%{http_code}' "${SMOKE_URL}" || true)"
+  SMOKE_CODE="$(curl -sS -o "${ART_DIR}/smoke_body.json" -w '%{http_code}' "${SMOKE_URL}" 2>>"${SMOKE_ERR_FILE}" || true)"
   {
     echo "url=${SMOKE_URL}"
     echo "http_code=${SMOKE_CODE}"
@@ -178,9 +181,10 @@ for i in $(seq 1 10); do
   sleep 0.5
 done
 if [ "${SMOKE_OK}" != "1" ]; then
-  echo "smoke failed after retries with http_code=${SMOKE_CODE}" | tee -a "${LOG_FILE}"
+  echo "smoke FAIL (${SMOKE_CODE})" | tee -a "${LOG_FILE}"
   exit 1
 fi
+echo "smoke OK (200)" | tee -a "${LOG_FILE}"
 
 echo "[7/8] Collect artifacts" | tee -a "${LOG_FILE}"
 "${DOCKER_CMD[@]}" ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
