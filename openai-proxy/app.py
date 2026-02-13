@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-import httpx, os, json, time, logging
+import httpx, os, json, time, logging, asyncio, random
 from urllib.parse import urlparse
 from common.policy import load_policy, get_user_role
 
@@ -43,6 +43,13 @@ USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limi
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
 POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
 ROLE_SOURCE = (os.environ.get("ONTOGIT_ROLE_SOURCE", "") or "").strip().lower()
+_MAX_CONCURRENCY = int(os.environ.get("OPENAI_PROXY_MAX_CONCURRENCY", "8") or "8")
+if _MAX_CONCURRENCY < 5:
+    _MAX_CONCURRENCY = 5
+if _MAX_CONCURRENCY > 10:
+    _MAX_CONCURRENCY = 10
+UPSTREAM_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENCY)
+RETRY_DELAYS = (0.2, 0.6, 1.5)
 
 app = FastAPI()
 
@@ -86,6 +93,29 @@ async def get_limits(user_id: str) -> dict | None:
     except Exception:
         pass
     return None
+
+
+async def _request_upstream_with_retry(method: str, url: str, params: dict, body: bytes | None, headers: dict):
+    last_exc: Exception | None = None
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                return await client.request(
+                    method,
+                    url,
+                    params=params,
+                    content=body if body else None,
+                    headers=headers,
+                )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            if attempt >= len(RETRY_DELAYS):
+                break
+            delay = RETRY_DELAYS[attempt] + random.uniform(0.0, 0.2)
+            await asyncio.sleep(delay)
+    if last_exc is not None:
+        raise last_exc
+    raise httpx.HTTPError("upstream request failed")
 
 
 def _limit_headers(user_id: str, used: float | None, limit: float, warn_level: str, role: str | None = None) -> dict:
@@ -180,13 +210,13 @@ async def proxy(path: str, req: Request):
 
     upstream_host = urlparse(url).hostname or "unknown"
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            upstream = await client.request(
+        async with UPSTREAM_SEMAPHORE:
+            upstream = await _request_upstream_with_retry(
                 req.method,
                 url,
-                params=dict(req.query_params),
-                content=body if body else None,
-                headers=headers,
+                dict(req.query_params),
+                body,
+                headers,
             )
     except httpx.ConnectError:
         logger.error("upstream_connect_error host=%s code=connect_error", upstream_host)
@@ -198,6 +228,20 @@ async def proxy(path: str, req: Request):
                     "code": "connect_error",
                     "hostname": upstream_host,
                     "message": "Upstream is unreachable",
+                }
+            },
+            headers=limit_headers,
+        )
+    except httpx.TimeoutException:
+        logger.error("upstream_timeout_error host=%s code=timeout_error", upstream_host)
+        return JSONResponse(
+            status_code=504,
+            content={
+                "error": {
+                    "type": "upstream_timeout_error",
+                    "code": "timeout_error",
+                    "hostname": upstream_host,
+                    "message": "Upstream timeout",
                 }
             },
             headers=limit_headers,
