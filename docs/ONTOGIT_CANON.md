@@ -2,6 +2,126 @@
 
 **Entry point: ontogit-stack/START_HERE.md**
 
+## TL;DR (One Screen)
+- Source of Truth сцены: markdown в git-репо (`frontmatter + body`), не Qdrant и не `webui.db`.
+- Канонический маршрут: клиенты идут в OpenWebUI backend (`/api/v1/ontogit_recall`, `/api/v1/ontogit_commit`), backend форвардит в memory-service.
+- `memory-service` на commit: парсит frontmatter, пишет scene `.md`, делает git commit, апсертит индекс в Qdrant.
+- Recall budget уже включён и зафиксирован: `ONTOGIT_RECALL_MAX_TOKENS=1500`.
+- OpenAI upstream ConnectError фиксирован: `e0216cd` (приоритет env + fallback + safe JSON error).
+- OpenWebUI async `task_id`-ответы отключены для chat completions: `8dfad3c` (`ENABLE_WEBSOCKET_SUPPORT=false`).
+- Текущая recall-политика этапа: Pulse OFF, recall только ручной (явный жест пользователя, например `//recall`, или явное UI-действие).
+- 8-слойная модель остаётся каноном; L0–L1 фиксируется как «паспорт сцены» поверх существующих полей.
+- Минимальный L0–L1 паспорт: `scene_id`, `status`, `hook`, `archetype`, `vector`, `body_marker`, `links`.
+- `status=closed` фиксируем только явным closure в сцене (что закрыто и почему), без эвристических авто-оценок.
+- На текущем этапе важнее наполнение базы (10–20 сцен-ядра), чем «умные» автотриггеры.
+- Где править канон: этот файл `docs/ONTOGIT_CANON.md`.
+
+## 0) Текущий этап и ограничения
+- Никаких новых автоматических «чувствительных» триггеров на возбуждение/резонанс.
+- Recall на текущем этапе считается ручным инструментом, не автономным агентом.
+- Pulse-policy считается отключённой для рабочего режима (см. раздел **Recall Policy (Current Stage)**).
+- `webui.db` и runtime hooks не являются источником истины сцены.
+
+## 1) Подтверждённые факты (ссылки на реализацию)
+- Канонический маршрут recall/commit через OpenWebUI backend:
+  - `docs/ONTOGIT_CANON.md:27`
+  - `open-webui-src/backend/open_webui/routers/ontogit.py:138`
+  - `open-webui-src/backend/open_webui/routers/ontogit.py:143`
+- `memory-service` commit-пайплайн:
+  - принимает commit: `memory-service/app/main.py:570`
+  - парсит frontmatter: `memory-service/app/main.py:589`
+  - формирует `meta`: `memory-service/app/main.py:598`
+  - пишет markdown scene: `memory-service/app/main.py:375`
+  - индексирует в Qdrant: `memory-service/app/main.py:627`, `memory-service/app/recall_mvp.py:55`
+- Поля сцены реально поддержаны сейчас (часть хранится в frontmatter, часть в Qdrant payload):
+  - `scene_id`, `title`, `pulse`, `vector`, `archetype`, `tags`, `importance`, `quote`, `body_preview`
+  - см. `memory-service/app/main.py:598` и `memory-service/app/recall_mvp.py:58`
+  - 8-слойные блоки в merge: `excitation`, `distinction`, `form`, `subjectivity`, `structure_links`, `archetypes`, `vector` (`memory-service/app/main.py:613`)
+- Recall budget подтверждён:
+  - env/read: `memory-service/app/main.py:65`
+  - логи `recall_budget ... budget=1500 ...`: `memory-service/app/main.py:520`, `memory-service/app/main.py:564`
+- Upstream ConnectError fix подтверждён: commit `e0216cd`
+  - выбор upstream по приоритету env + fallback: `openai-proxy/app.py` (в рабочем репо ontogit-stack)
+  - safe JSON error вместо падения.
+- Async `task_id`-режим OpenWebUI подтверждён и зафиксирован:
+  - условие async-ветки: `open-webui-src/backend/open_webui/main.py:1789`
+  - возврат `{"status": True, "task_id": ...}`: `open-webui-src/backend/open_webui/main.py:1799`
+  - отключение websocket в нашем запуске: commit `8dfad3c` (`docker-compose.webui-ontogate.yml`)
+  - цель: `/api/chat/completions` возвращает sync completion (`choices`), а не `task_id`.
+
+## 2) Source of Truth (канон хранения)
+- **Source of Truth сцены**: markdown scene в git-репо (`frontmatter + body`), формируется в `memory-service/app/main.py:375`.
+- **Qdrant**: индекс для recall/ранжирования, не источник истины (`memory-service/app/recall_mvp.py:55`).
+- **OpenWebUI `webui.db`**: состояние UI/функций/хуков (таблица `function` и др.), не канон сцен.
+- Практический путь сцен задаётся `ONTOGIT_DIR` и шаблоном `scenes/YYYY/MM/<scene_id>.md` (`memory-service/app/main.py:387`).
+
+## 3) Recall Policy (Current Stage)
+- Pulse OFF для рабочего контура.
+- Recall только по явному действию пользователя:
+  - явная команда (`//recall`) или
+  - явное UI-действие recall.
+- Budget `1500` — уже действующий предохранитель (`memory-service/app/main.py:65`).
+- Dedup допустим только как технический анти-дубль, без «интеллектуального автозапуска».
+- Принцип этапа:
+  - сначала наполняем базу сцен и связей;
+  - затем улучшаем использование;
+  - авто-эвристики «чувствительности» на этом этапе запрещены.
+
+## 4) L0–L1 как паспорт в 8-слойной модели
+- 8-слойный канон не меняем.
+- L0–L1 — это минимальный «паспорт сцены», который маппится на уже существующие поля.
+
+### Паспорт L0–L1 (минимум)
+- `scene_id: str` — стабильный ключ сцены.
+- `status: open | in_progress | closed`
+- `hook: str` — конкретный незавершённый узел возврата.
+- `archetype: str | list[str]`
+- `vector: direction|target|polarity` (или строка направления, если без структуры).
+- `body_marker: str` — короткий телесный/сценический маркер (<=240).
+- `links: list[{type, to_scene_id}]` — связи между сценами.
+
+### Маппинг паспорта на текущую 8-слойную реализацию
+- `scene_id` -> уже есть как top-level (`memory-service/app/main.py:600`).
+- `status` -> **минимальное добавление**: top-level поле frontmatter (`open` по умолчанию).
+- `hook` -> **минимальное добавление**: top-level поле frontmatter (строка).
+- `archetype` -> уже есть top-level `archetype`; расширенный вариант через `archetypes` (`memory-service/app/main.py:605`, `memory-service/app/main.py:613`).
+- `vector` -> уже есть (`vector_direction`, `vector_target`) в индексе (`memory-service/app/recall_mvp.py:77`).
+- `body_marker` -> маппится на `quote`/`body_preview` (`memory-service/app/main.py:618`, `memory-service/app/recall_mvp.py:67`).
+- `links` -> маппится на `structure_links.nodes` как базовая версия (`memory-service/app/recall_mvp.py:84`); при необходимости расширяется до структурированных link-объектов без ломки 8-слойной модели.
+
+### Правила статуса и hook
+- `status=closed` только при явном closure-коммите:
+  - что именно закрыто;
+  - чем закрыто (решение/событие/связь).
+- `hook` — это конкретный незавершённый узел/напряжение/вектор возврата, а не общая тема.
+- Запрещены «универсальные оценки состояния» без явных опор различения.
+
+## 5) Filling Protocol (practical)
+- Создание новой незавершённой сцены:
+  - commit через канонический маршрут `/api/v1/ontogit_commit`;
+  - минимум frontmatter: `scene_id,status,hook,archetype,vector,quote(or body_marker),structure_links`.
+- Обновление сцены:
+  - новый commit как акт фиксации сдвига L0 -> L1;
+  - не перезаписывать историю «магически», а фиксировать переходы.
+- Использование `//recall`:
+  - ожидаем выдачу опор/сцен/связей;
+  - не ожидаем «угадывание человека» или автотерапевтическую интерпретацию.
+- Рекомендуемый старт:
+  - собрать 10–20 «сцен-ядер» (незавершённые узлы с явными hook/links).
+
+## 6) Артефакты и карта архитектуры
+- Канон и политика: `docs/ONTOGIT_CANON.md` (этот файл).
+- Реализация маршрута recall/commit через backend:
+  - `open-webui-src/backend/open_webui/routers/ontogit.py`
+- Реализация scene commit/recall:
+  - `memory-service/app/main.py`
+  - `memory-service/app/recall_mvp.py`
+- Runtime hooks/OpenWebUI function storage:
+  - `webui.db` таблица `function` (например `ontogit_recall_inlet`, `ontogit_usage_hook`).
+- Лимиты/usage:
+  - `usage-writer/app.py`
+  - `usage.db` таблицы `memory_usage_events`, `usage_events`, `users`, `roles`.
+
 ## A) Контуры (Service-auth vs User-auth)
 - **Service-auth**: межсервисный допуск между gateway и memory-service.
 - **User-auth**: идентификация пользователя (JWT) для приложений и usage.
