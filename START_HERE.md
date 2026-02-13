@@ -4,6 +4,14 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 
 **Spec**: `docs/ONTOGIT_CANON.md` (authoritative canon for headers/env/recall route/limits/usage).
 
+## Deploy OpenWebUI (one command)
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+./scripts/deploy_openwebui.sh
+COMMIT=<sha> ./scripts/deploy_openwebui.sh
+```
+See: `docs/DEPLOY_WEBUI.md`
+
 ## Governance
 - Governance: see `docs/governance/README.md`
 - Run: `./scripts/smoke_governance.sh`

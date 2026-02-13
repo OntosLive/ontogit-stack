@@ -16,6 +16,12 @@
 - На текущем этапе важнее наполнение базы (10–20 сцен-ядра), чем «умные» автотриггеры.
 - Где править канон: этот файл `docs/ONTOGIT_CANON.md`.
 
+## Ops Rituals (canonical)
+- Deploy OpenWebUI only via ritual script: `scripts/deploy_openwebui.sh`
+- Deployment guide: `docs/DEPLOY_WEBUI.md`
+- Deployment artifacts: `ops/state/<ts>_deploy_openwebui/`
+- Principle: deploy only through ritual, not manual compose/image edits.
+
 ## 0) Текущий этап и ограничения
 - Никаких новых автоматических «чувствительных» триггеров на возбуждение/резонанс.
 - Recall на текущем этапе считается ручным инструментом, не автономным агентом.
