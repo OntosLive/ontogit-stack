@@ -12,6 +12,14 @@ COMMIT=<sha> ./scripts/deploy_openwebui.sh
 ```
 See: `docs/DEPLOY_WEBUI.md`
 
+## Deploy openai-proxy (one command)
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+./scripts/deploy_openai_proxy.sh
+COMMIT=<sha> ./scripts/deploy_openai_proxy.sh
+```
+See: `docs/DEPLOY_OPENAI_PROXY.md`
+
 ## Governance
 - Governance: see `docs/governance/README.md`
 - Run: `./scripts/smoke_governance.sh`

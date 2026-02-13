@@ -20,6 +20,9 @@
 - Deploy OpenWebUI only via ritual script: `scripts/deploy_openwebui.sh`
 - Deployment guide: `docs/DEPLOY_WEBUI.md`
 - Deployment artifacts: `ops/state/<ts>_deploy_openwebui/`
+- Deploy openai-proxy only via ritual script: `scripts/deploy_openai_proxy.sh`
+- Deployment guide: `docs/DEPLOY_OPENAI_PROXY.md`
+- Deployment artifacts: `ops/state/<ts>_deploy_openai_proxy/`
 - Principle: deploy only through ritual, not manual compose/image edits.
 
 ## 0) Текущий этап и ограничения
