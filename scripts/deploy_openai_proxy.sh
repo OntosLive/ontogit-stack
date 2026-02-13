@@ -159,12 +159,26 @@ fi
 echo "host_port=${HOST_PORT}" | tee -a "${LOG_FILE}"
 
 echo "[6/8] Smoke /v1/models" | tee -a "${LOG_FILE}"
-SMOKE_URL="http://127.0.0.1:${HOST_PORT}/v1/models"
-SMOKE_CODE="$(curl -sS -o "${ART_DIR}/smoke_body.json" -w '%{http_code}' "${SMOKE_URL}" || true)"
+SMOKE_HOST="127.0.0.1"
+SMOKE_PORT="${HOST_PORT:-${OPENAI_PROXY_PORT}}"
+SMOKE_URL="http://${SMOKE_HOST}:${SMOKE_PORT}/v1/models"
 echo "url=${SMOKE_URL}" > "${ART_DIR}/smoke_http.txt"
-echo "http_code=${SMOKE_CODE}" >> "${ART_DIR}/smoke_http.txt"
-if [ "${SMOKE_CODE}" != "200" ]; then
-  echo "smoke failed with http_code=${SMOKE_CODE}" | tee -a "${LOG_FILE}"
+SMOKE_CODE=""
+SMOKE_OK=0
+for i in $(seq 1 10); do
+  SMOKE_CODE="$(curl -sS -o "${ART_DIR}/smoke_body.json" -w '%{http_code}' "${SMOKE_URL}" || true)"
+  {
+    echo "url=${SMOKE_URL}"
+    echo "http_code=${SMOKE_CODE}"
+  } > "${ART_DIR}/smoke_http.txt"
+  if [ "${SMOKE_CODE}" = "200" ]; then
+    SMOKE_OK=1
+    break
+  fi
+  sleep 0.5
+done
+if [ "${SMOKE_OK}" != "1" ]; then
+  echo "smoke failed after retries with http_code=${SMOKE_CODE}" | tee -a "${LOG_FILE}"
   exit 1
 fi
 
