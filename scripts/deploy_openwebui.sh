@@ -88,7 +88,17 @@ echo "[2/8] Create temporary worktree" | tee -a "${LOG_FILE}"
 git -C "${WEBUI_SRC}" worktree add --detach "${WORKTREE_DIR}" "${RESOLVED_SHA}" | tee -a "${LOG_FILE}"
 
 echo "[3/8] Build image ${IMAGE}" | tee -a "${LOG_FILE}"
-"${DOCKER_CMD[@]}" build -t "${IMAGE}" "${WORKTREE_DIR}" | tee -a "${LOG_FILE}"
+BUILD_ERR_FILE="${ART_DIR}/build_stderr.txt"
+if "${DOCKER_CMD[@]}" image inspect "${IMAGE}" >/dev/null 2>&1; then
+  echo "image exists locally; skip build: ${IMAGE}" | tee -a "${LOG_FILE}"
+else
+  if ! "${DOCKER_CMD[@]}" build -t "${IMAGE}" "${WORKTREE_DIR}" 2>"${BUILD_ERR_FILE}" | tee -a "${LOG_FILE}"; then
+    if rg -qi 'docker hub|registry-1\.docker\.io|token|timeout' "${BUILD_ERR_FILE}"; then
+      echo "Docker Hub unreachable; try again or docker login" | tee -a "${LOG_FILE}"
+    fi
+    exit 1
+  fi
+fi
 
 echo "[4/8] Update compose pin in ${COMPOSE_PIN_FILE}" | tee -a "${LOG_FILE}"
 cp "${COMPOSE_PIN_FILE}" "${PRE_FILE}"
