@@ -24,6 +24,7 @@
 - Deployment guide: `docs/DEPLOY_OPENAI_PROXY.md`
 - Deployment artifacts: `ops/state/<ts>_deploy_openai_proxy/`
 - Daily beta report: `scripts/report_daily.sh` (docs: `docs/REPORTS.md`)
+- Backup/restore: `scripts/backup.sh`, `scripts/restore.sh` (docs: `docs/BACKUP_RESTORE.md`)
 - Principle: deploy only through ritual, not manual compose/image edits.
 
 ## 0) Текущий этап и ограничения

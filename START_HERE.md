@@ -5,6 +5,7 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 **Spec**: `docs/ONTOGIT_CANON.md` (authoritative canon for headers/env/recall route/limits/usage).
 **Quotas**: `docs/QUOTAS.md` (monthly limits, roles, admin workflow).
 **Reports**: `docs/REPORTS.md` (daily beta telemetry).
+**Backup/Restore**: `docs/BACKUP_RESTORE.md` (canonical safety ritual).
 
 ## Deploy OpenWebUI (one command)
 ```bash
