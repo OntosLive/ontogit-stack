@@ -81,11 +81,7 @@ _extract_archive() {
     return 1
   fi
   mkdir -p "${dest}"
-  if echo "${archive}" | rg -q '\.zst$'; then
-    zstd -dc "${archive}" | tar -C "${dest}" -xf -
-  else
-    tar -C "${dest}" -xzf "${archive}"
-  fi
+  tar -C "${dest}" -xzf "${archive}"
 }
 
 _restore_volume() {
@@ -97,32 +93,40 @@ _restore_volume() {
   if ! "${DOCKER_CMD[@]}" volume inspect "${vol}" >/dev/null 2>&1; then
     return 1
   fi
-  if echo "${archive}" | rg -q '\.zst$'; then
-    zstd -dc "${archive}" | "${DOCKER_CMD[@]}" run --rm -i -v "${vol}:/data" alpine tar -C /data -xf -
-  else
-    "${DOCKER_CMD[@]}" run --rm -i -v "${vol}:/data" alpine tar -C /data -xzf -
-  fi
+  "${DOCKER_CMD[@]}" run --rm -i -v "${vol}:/data" -v "${BACKUP_DIR}:/backup" alpine \
+    tar -C /data -xzf "/backup/$(basename "${archive}")"
 }
 
 needs_stop=()
-if ls "${BACKUP_DIR}"/openwebui-data.tar.* >/dev/null 2>&1; then
+if ls "${BACKUP_DIR}"/openwebui-data.tar.gz >/dev/null 2>&1; then
   needs_stop+=("open-webui")
 fi
-if ls "${BACKUP_DIR}"/ontogit-user.tar.* >/dev/null 2>&1; then
+if ls "${BACKUP_DIR}"/ontogit-user.tar.gz >/dev/null 2>&1; then
   needs_stop+=("usage-writer" "memory-service")
 fi
-if ls "${BACKUP_DIR}"/qdrant.tar.* >/dev/null 2>&1; then
+if ls "${BACKUP_DIR}"/qdrant.tar.gz >/dev/null 2>&1; then
   needs_stop+=("qdrant")
+fi
+if ls "${BACKUP_DIR}"/ontogit-repo.tar.gz >/dev/null 2>&1; then
+  needs_stop+=("memory-service")
 fi
 
 if [ "${#needs_stop[@]}" -gt 0 ]; then
   (cd "${STACK_DIR}" && "${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml stop "${needs_stop[@]}") || true
 fi
 
-_extract_archive "${BACKUP_DIR}"/openwebui-data.tar.* "${OPENWEBUI_DATA}" || true
-_extract_archive "${BACKUP_DIR}"/ontogit-user.tar.* "${ONTOGIT_USER_DIR}" || true
-_extract_archive "${BACKUP_DIR}"/scenes-repo.tar.* "${SCENES_DIR}" || true
-_restore_volume "${BACKUP_DIR}"/qdrant.tar.* "${QDRANT_VOL}" || true
+_extract_archive "${BACKUP_DIR}"/openwebui-data.tar.gz "${OPENWEBUI_DATA}" || true
+_extract_archive "${BACKUP_DIR}"/ontogit-user.tar.gz "${ONTOGIT_USER_DIR}" || true
+if [ -f "${BACKUP_DIR}/ontogit-repo.tar.gz" ]; then
+  if sudo -n true >/dev/null 2>&1; then
+    sudo mkdir -p "${SCENES_DIR}"
+    sudo tar -C "${SCENES_DIR}" -xzf "${BACKUP_DIR}/ontogit-repo.tar.gz"
+  else
+    notify_fail "need sudo to restore /root/ontogit"
+    exit 1
+  fi
+fi
+_restore_volume "${BACKUP_DIR}"/qdrant.tar.gz "${QDRANT_VOL}" || true
 
 (cd "${STACK_DIR}" && "${COMPOSE_CMD[@]}" -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d)
 

@@ -56,6 +56,7 @@ OPENWEBUI_DATA_FALLBACK="/home/ontoslive/ontos_data/openwebui-data"
 ONTOGIT_USER_DIR="/home/ontoslive/ontos_data/ontogit-user"
 SCENES_DIR="${SCENES_DIR:-/root/ontogit}"
 QDRANT_VOL="qdrant_storage"
+NEED_SUDO=0
 
 data_mount="$("${DOCKER_CMD[@]}" inspect open-webui --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
 if [ -z "${data_mount}" ]; then
@@ -69,38 +70,23 @@ else
   OPENWEBUI_DATA="${OPENWEBUI_DATA_FALLBACK}"
 fi
 
-if command -v zstd >/dev/null 2>&1; then
-  COMP_EXT="zst"
-  COMPRESS_CMD=(zstd -T0 -q -o)
-else
-  COMP_EXT="gz"
-  COMPRESS_CMD=(gzip -c)
-fi
-
-_pack_dir() {
+_pack_dir_gz() {
   local src="$1"
   local out="$2"
   if [ ! -d "${src}" ]; then
     return 1
   fi
-  if [ "${COMP_EXT}" = "zst" ]; then
-    tar -C "${src}" -cf - . | "${COMPRESS_CMD[@]}" "${out}"
-  else
-    tar -C "${src}" -cf - . | "${COMPRESS_CMD[@]}" > "${out}"
-  fi
+  tar -C "${src}" -czf "${out}" .
 }
 
-_pack_volume() {
+_pack_volume_gz() {
   local vol="$1"
   local out="$2"
   if ! "${DOCKER_CMD[@]}" volume inspect "${vol}" >/dev/null 2>&1; then
     return 1
   fi
-  if [ "${COMP_EXT}" = "zst" ]; then
-    "${DOCKER_CMD[@]}" run --rm -v "${vol}:/data:ro" alpine tar -C /data -cf - . | "${COMPRESS_CMD[@]}" "${out}"
-  else
-    "${DOCKER_CMD[@]}" run --rm -v "${vol}:/data:ro" alpine tar -C /data -cf - . | "${COMPRESS_CMD[@]}" > "${out}"
-  fi
+  "${DOCKER_CMD[@]}" run --rm -v "${vol}:/data:ro" -v "${ART_DIR}:/backup" alpine \
+    tar -C /data -czf "/backup/$(basename "${out}")" .
 }
 
 "${DOCKER_CMD[@]}" ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' > "${ART_DIR}/docker_ps.txt"
@@ -114,23 +100,34 @@ if [ -f "${STACK_DIR}/policy/onto_policy.yml" ]; then
   cp "${STACK_DIR}/policy/onto_policy.yml" "${CONFIG_DIR}/onto_policy.yml"
 fi
 
-if _pack_dir "${OPENWEBUI_DATA}" "${ART_DIR}/openwebui-data.tar.${COMP_EXT}"; then
+if _pack_dir_gz "${OPENWEBUI_DATA}" "${ART_DIR}/openwebui-data.tar.gz"; then
   :
 fi
-if _pack_dir "${ONTOGIT_USER_DIR}" "${ART_DIR}/ontogit-user.tar.${COMP_EXT}"; then
+if _pack_dir_gz "${ONTOGIT_USER_DIR}" "${ART_DIR}/ontogit-user.tar.gz"; then
   :
 fi
-if _pack_dir "${SCENES_DIR}" "${ART_DIR}/scenes-repo.tar.${COMP_EXT}"; then
-  :
+if [ -d "${SCENES_DIR}" ]; then
+  if sudo -n true >/dev/null 2>&1; then
+    sudo tar -C "${SCENES_DIR}" -czf "${ART_DIR}/ontogit-repo.tar.gz" .
+  else
+    echo "need sudo to backup /root/ontogit" >> "${ART_DIR}/backup.log"
+    NEED_SUDO=1
+  fi
 fi
-if _pack_volume "${QDRANT_VOL}" "${ART_DIR}/qdrant.tar.${COMP_EXT}"; then
+if _pack_volume_gz "${QDRANT_VOL}" "${ART_DIR}/qdrant.tar.gz"; then
   :
 fi
 
 cat > "${ART_DIR}/how_to_repeat.txt" <<TXT
 ./scripts/backup.sh
 SCENES_DIR=${SCENES_DIR} ./scripts/backup.sh
+archived: openwebui-data.tar.gz ontogit-user.tar.gz ontogit-repo.tar.gz qdrant.tar.gz
 TXT
+
+if [ "${NEED_SUDO}" -ne 0 ]; then
+  notify_fail "need sudo to backup /root/ontogit"
+  exit 1
+fi
 
 notify_ok
 exit 0
