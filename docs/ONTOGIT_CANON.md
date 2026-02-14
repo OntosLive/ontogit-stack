@@ -23,6 +23,7 @@
 - Deploy openai-proxy only via ritual script: `scripts/deploy_openai_proxy.sh`
 - Deployment guide: `docs/DEPLOY_OPENAI_PROXY.md`
 - Deployment artifacts: `ops/state/<ts>_deploy_openai_proxy/`
+- Daily beta report: `scripts/report_daily.sh` (docs: `docs/REPORTS.md`)
 - Principle: deploy only through ritual, not manual compose/image edits.
 
 ## 0) Текущий этап и ограничения
