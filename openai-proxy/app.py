@@ -417,7 +417,7 @@ async def proxy(path: str, req: Request):
                 {
                     "ts": int(time.time()),
                     "user_id": user_id,
-                    "model": model or model_hint,
+                    "model": model or model_hint or "unknown",
                     "request_id": req_id,
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
