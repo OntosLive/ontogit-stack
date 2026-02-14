@@ -17,6 +17,12 @@ Artifacts in `ops/state/<ts>_backup/`:
 - `config/compose.config.yml`, `config/docker-compose.yml`, `config/docker-compose.webui-ontogate.yml`, `config/onto_policy.yml`
 - `how_to_repeat.txt`
 
+## Archive to external drive
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+ARCHIVE_DIR="/mnt/g/ontogit_backups" ./scripts/backup.sh
+```
+
 ## Restore (careful)
 ```bash
 cd /home/ontoslive/ontos_work/ontogit-stack

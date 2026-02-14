@@ -5,6 +5,7 @@ STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 TS="$(date +%Y%m%d_%H%M%S)"
 ART_DIR="${STACK_DIR}/ops/state/${TS}_backup"
 CONFIG_DIR="${ART_DIR}/config"
+OUT="${ART_DIR}"
 
 DOCKER_BIN=""
 DOCKER_CMD=()
@@ -118,15 +119,41 @@ if _pack_volume_gz "${QDRANT_VOL}" "${ART_DIR}/qdrant.tar.gz"; then
   :
 fi
 
+ARCHIVE_LINE="no ARCHIVE_DIR used"
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  ARCHIVE_LINE="ARCHIVE_DIR=${ARCHIVE_DIR} ./scripts/backup.sh"
+fi
+
 cat > "${ART_DIR}/how_to_repeat.txt" <<TXT
 ./scripts/backup.sh
 SCENES_DIR=${SCENES_DIR} ./scripts/backup.sh
+${ARCHIVE_LINE}
 archived: openwebui-data.tar.gz ontogit-user.tar.gz ontogit-repo.tar.gz qdrant.tar.gz
 TXT
 
 if [ "${NEED_SUDO}" -ne 0 ]; then
   notify_fail "need sudo to backup /root/ontogit"
   exit 1
+fi
+
+if [ -n "${ARCHIVE_DIR:-}" ]; then
+  mkdir -p "${ARCHIVE_DIR}"
+  ARCHIVE_DEST="${ARCHIVE_DIR}/$(basename "${OUT}")"
+  if command -v rsync >/dev/null 2>&1; then
+    if ! rsync -a --info=progress2 "${OUT}/" "${ARCHIVE_DEST}/"; then
+      notify_fail "archive copy failed (rsync)"
+      exit 1
+    fi
+  else
+    if ! cp -a "${OUT}" "${ARCHIVE_DIR}/"; then
+      notify_fail "archive copy failed (cp)"
+      exit 1
+    fi
+  fi
+  if ! du -sh "${OUT}" "${ARCHIVE_DEST}"; then
+    notify_fail "archive du failed"
+    exit 1
+  fi
 fi
 
 notify_ok
