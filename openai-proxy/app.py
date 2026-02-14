@@ -174,6 +174,8 @@ async def proxy(path: str, req: Request):
     tokens_in = None
     tokens_out = None
     total_tokens = None
+    history_before = _pick_first_header(req, ["x-ontogit-history-before"])
+    history_after = _pick_first_header(req, ["x-ontogit-history-after"])
     retry_count = 0
     error_type = ""
     http_status = None
@@ -254,6 +256,8 @@ async def proxy(path: str, req: Request):
                             "error_type": error_type,
                             "retry_count": retry_count,
                             "latency_ms": latency_ms,
+                            "history_pairs_before": int(history_before) if history_before else None,
+                            "history_pairs_after": int(history_after) if history_after else None,
                         }
                     )
                 )
@@ -299,11 +303,13 @@ async def proxy(path: str, req: Request):
                         "total_tokens": total_tokens,
                         "http_status": http_status,
                         "error_type": error_type,
-                        "retry_count": retry_count,
-                        "latency_ms": latency_ms,
-                    }
+                            "retry_count": retry_count,
+                            "latency_ms": latency_ms,
+                            "history_pairs_before": int(history_before) if history_before else None,
+                            "history_pairs_after": int(history_after) if history_after else None,
+                        }
+                    )
                 )
-            )
         return resp
     except httpx.TimeoutException:
         logger.error("upstream_timeout_error host=%s code=timeout_error", upstream_host)
@@ -335,11 +341,13 @@ async def proxy(path: str, req: Request):
                         "total_tokens": total_tokens,
                         "http_status": http_status,
                         "error_type": error_type,
-                        "retry_count": retry_count,
-                        "latency_ms": latency_ms,
-                    }
+                            "retry_count": retry_count,
+                            "latency_ms": latency_ms,
+                            "history_pairs_before": int(history_before) if history_before else None,
+                            "history_pairs_after": int(history_after) if history_after else None,
+                        }
+                    )
                 )
-            )
         return resp
     except httpx.HTTPError:
         logger.error("upstream_http_error host=%s code=http_error", upstream_host)
@@ -371,11 +379,13 @@ async def proxy(path: str, req: Request):
                         "total_tokens": total_tokens,
                         "http_status": http_status,
                         "error_type": error_type,
-                        "retry_count": retry_count,
-                        "latency_ms": latency_ms,
-                    }
+                            "retry_count": retry_count,
+                            "latency_ms": latency_ms,
+                            "history_pairs_before": int(history_before) if history_before else None,
+                            "history_pairs_after": int(history_after) if history_after else None,
+                        }
+                    )
                 )
-            )
         return resp
 
     resp_bytes = upstream.content
@@ -426,6 +436,8 @@ async def proxy(path: str, req: Request):
                     "error_type": error_type,
                     "retry_count": retry_count,
                     "latency_ms": latency_ms,
+                    "history_pairs_before": int(history_before) if history_before else None,
+                    "history_pairs_after": int(history_after) if history_after else None,
                 }
             )
         )

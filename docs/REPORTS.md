@@ -22,6 +22,11 @@ Artifacts are stored in `ops/state/<ts>_report_daily/`:
 - `usd_est`: approximate USD based on tokens (rough estimate).
 - `errors`: count of rows where `http_status >= 400` or `error_type` is set.
 
+## History window (beta cost control)
+- `HISTORY_WINDOW_PAIRS` (default `20`): keep only the last N user/assistant pairs.
+- `HISTORY_WINDOW_PAIRS=0` disables trimming.
+- Use `report_daily` to compare tokens/usd before vs after changes.
+
 ## Reading usd_est vs tokens
 - `usd_est` is a rough cost estimate derived from token counts.
 - Use tokens to compare usage volume; use `usd_est` only for rough cost trends.

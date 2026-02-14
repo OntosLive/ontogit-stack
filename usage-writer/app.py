@@ -71,9 +71,16 @@ def init_db():
       http_status INTEGER,
       error_type TEXT,
       retry_count INTEGER,
-      latency_ms INTEGER
+      latency_ms INTEGER,
+      history_pairs_before INTEGER,
+      history_pairs_after INTEGER
     )
     """)
+    for col in ("history_pairs_before", "history_pairs_after"):
+        try:
+            cur.execute(f"ALTER TABLE usage_telemetry_events ADD COLUMN {col} INTEGER")
+        except Exception:
+            pass
     cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON usage_telemetry_events(ts)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_user ON usage_telemetry_events(user_id)")
 
@@ -172,9 +179,9 @@ async def telemetry(req: Request):
         """
         INSERT INTO usage_telemetry_events(
           ts,user_id,model,request_id,tokens_in,tokens_out,total_tokens,http_status,error_type,
-          retry_count,latency_ms
+          retry_count,latency_ms,history_pairs_before,history_pairs_after
         )
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             ts,
@@ -188,6 +195,8 @@ async def telemetry(req: Request):
             body.get("error_type"),
             _to_int(body.get("retry_count")),
             _to_int(body.get("latency_ms")),
+            _to_int(body.get("history_pairs_before")),
+            _to_int(body.get("history_pairs_after")),
         ),
     )
     con.commit()

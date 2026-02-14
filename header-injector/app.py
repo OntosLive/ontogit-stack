@@ -22,6 +22,7 @@ FALLBACK_USER = os.environ.get(
 ).strip()
 METRICS_STATE_PATH = os.environ.get("METRICS_STATE_PATH", "/ontogit_user/metrics_state.json")
 METRICS_STATE_SAVE_EVERY = int(os.environ.get("METRICS_STATE_SAVE_EVERY", "10") or 10)
+HISTORY_WINDOW_PAIRS = int(os.environ.get("HISTORY_WINDOW_PAIRS", "20") or 20)
 
 app = FastAPI()
 log = logging.getLogger("header_injector")
@@ -60,6 +61,26 @@ def _messages_token_est(messages: list[dict]) -> int:
     for m in messages:
         total += _estimate_tokens(_message_text(m))
     return total
+
+
+def _count_pairs(messages: list[dict]) -> int:
+    roles = [m.get("role") for m in messages if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    return len(roles) // 2
+
+
+def _trim_history_pairs(messages: list[dict], max_pairs: int) -> tuple[list[dict], int, int]:
+    before_pairs = _count_pairs(messages)
+    if max_pairs <= 0:
+        return messages, before_pairs, before_pairs
+
+    system_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "system"]
+    convo_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    keep = max_pairs * 2
+    if len(convo_msgs) <= keep:
+        return messages, before_pairs, before_pairs
+    trimmed_tail = convo_msgs[-keep:]
+    after_pairs = min(before_pairs, max_pairs)
+    return system_msgs + trimmed_tail, before_pairs, after_pairs
 
 
 def _extract_recall_block(text: str) -> tuple[str, int] | None:
@@ -366,6 +387,18 @@ async def proxy(path: str, req: Request):
             if not model or not isinstance(messages, list):
                 pass
             else:
+                messages, pairs_before, pairs_after = _trim_history_pairs(messages, HISTORY_WINDOW_PAIRS)
+                if pairs_before != pairs_after:
+                    req_id = _pick_first_header(req, ["x-request-id"]) or "unknown"
+                    log.info(
+                        "history_window conversation_id=%s request_id=%s pairs_before=%s pairs_after=%s",
+                        conversation_id,
+                        req_id,
+                        pairs_before,
+                        pairs_after,
+                    )
+                headers["X-Ontogit-History-Before"] = str(pairs_before)
+                headers["X-Ontogit-History-After"] = str(pairs_after)
                 tokens_after = _messages_token_est(messages)
                 recall_block = None
                 recall_msg_idx = None
