@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import sqlite3, time, json, os
 import urllib.request, urllib.error
 from common.policy import load_policy, get_user_role, get_monthly_limits
@@ -58,6 +58,24 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_usage_events_user ON usage_events(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS usage_telemetry_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      user_id TEXT,
+      model TEXT,
+      request_id TEXT,
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      total_tokens INTEGER,
+      http_status INTEGER,
+      error_type TEXT,
+      retry_count INTEGER,
+      latency_ms INTEGER
+    )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON usage_telemetry_events(ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_user ON usage_telemetry_events(user_id)")
 
     cur.execute("""
       INSERT OR IGNORE INTO roles(name,limit_usd,warn_70,warn_90)
@@ -102,6 +120,12 @@ async def usage(req: Request):
     return {"ok": True}
 
 
+def _usd_est_from_tokens(tokens_in: int | None, tokens_out: int | None) -> float:
+    ti = int(tokens_in or 0)
+    to = int(tokens_out or 0)
+    return (ti / 1000.0) * 0.0025 + (to / 1000.0) * 0.01
+
+
 @app.get("/sum_usd")
 async def sum_usd(user_id: str = "", from_ts: int | None = None, to_ts: int | None = None):
     if not user_id:
@@ -128,6 +152,39 @@ async def sum_usd(user_id: str = "", from_ts: int | None = None, to_ts: int | No
 
     total = float(row[0] or 0.0)
     return {"user_id": user_id, "sum_usd": total, "from_ts": int(from_ts), "to_ts": int(to_ts)}
+
+
+@app.post("/telemetry")
+async def telemetry(req: Request):
+    body = await req.json()
+    ts = int(body.get("ts") or time.time())
+    con = sqlite3.connect(DB)
+    cur = con.cursor()
+    cur.execute(
+        """
+        INSERT INTO usage_telemetry_events(
+          ts,user_id,model,request_id,tokens_in,tokens_out,total_tokens,http_status,error_type,
+          retry_count,latency_ms
+        )
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            ts,
+            body.get("user_id"),
+            body.get("model"),
+            body.get("request_id"),
+            body.get("tokens_in"),
+            body.get("tokens_out"),
+            body.get("total_tokens"),
+            body.get("http_status"),
+            body.get("error_type"),
+            body.get("retry_count"),
+            body.get("latency_ms"),
+        ),
+    )
+    con.commit()
+    con.close()
+    return {"ok": True}
 
 
 def _month_start_ts() -> int:
@@ -242,6 +299,122 @@ async def limits(user_id: str):
         "warn_70": warn_70,
         "warn_90": warn_90,
     }
+
+
+def _day_start_ts_days_ago(days_ago: int) -> int:
+    now = datetime.now(timezone.utc)
+    target = now - timedelta(days=days_ago)
+    return int(datetime(target.year, target.month, target.day, tzinfo=timezone.utc).timestamp())
+
+
+def _day_start_ts_from_ts(ts: int) -> int:
+    dt = datetime.fromtimestamp(int(ts), timezone.utc)
+    return int(datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).timestamp())
+
+
+@app.get("/report/daily")
+async def report_daily(days: int = 7):
+    days = max(1, min(90, int(days or 7)))
+    start_ts = _day_start_ts_days_ago(days - 1)
+    end_ts = int(time.time())
+
+    con = sqlite3.connect(DB)
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT ts,user_id,tokens_in,tokens_out,total_tokens,http_status,error_type
+        FROM usage_telemetry_events
+        WHERE ts >= ? AND ts <= ?
+        """,
+        (start_ts, end_ts),
+    )
+    rows = cur.fetchall()
+    con.close()
+
+    buckets: dict[int, dict[str, float | int | set]] = {}
+    for ts, user_id, tin, tout, total, http_status, error_type in rows:
+        day_ts = _day_start_ts_from_ts(ts)
+        b = buckets.setdefault(
+            day_ts,
+            {"dau": set(), "requests": 0, "tokens": 0, "usd_est": 0.0, "errors": 0},
+        )
+        if user_id:
+            b["dau"].add(user_id)
+        b["requests"] += 1
+        total_tokens = int(total or 0)
+        if total_tokens <= 0:
+            total_tokens = int((tin or 0) + (tout or 0))
+        b["tokens"] += total_tokens
+        b["usd_est"] += _usd_est_from_tokens(tin, tout)
+        if (http_status and int(http_status) >= 400) or (error_type and str(error_type).strip()):
+            b["errors"] += 1
+
+    out = []
+    for i in range(days):
+        day_ts = _day_start_ts_days_ago(days - 1 - i)
+        b = buckets.get(day_ts)
+        if not b:
+            out.append({"day_ts": day_ts, "dau": 0, "requests": 0, "tokens": 0, "usd_est": 0.0, "errors": 0})
+            continue
+        out.append(
+            {
+                "day_ts": day_ts,
+                "dau": len(b["dau"]),
+                "requests": int(b["requests"]),
+                "tokens": int(b["tokens"]),
+                "usd_est": float(b["usd_est"]),
+                "errors": int(b["errors"]),
+            }
+        )
+    return {"days": days, "items": out}
+
+
+@app.get("/report/users")
+async def report_users(days: int = 7, limit: int = 20):
+    days = max(1, min(90, int(days or 7)))
+    limit = max(1, min(200, int(limit or 20)))
+    start_ts = _day_start_ts_days_ago(days - 1)
+    end_ts = int(time.time())
+
+    con = sqlite3.connect(DB)
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT user_id,tokens_in,tokens_out,total_tokens,http_status,error_type
+        FROM usage_telemetry_events
+        WHERE ts >= ? AND ts <= ?
+        """,
+        (start_ts, end_ts),
+    )
+    rows = cur.fetchall()
+    con.close()
+
+    agg: dict[str, dict[str, float | int]] = {}
+    for user_id, tin, tout, total, http_status, error_type in rows:
+        if not user_id:
+            continue
+        u = agg.setdefault(user_id, {"requests": 0, "tokens": 0, "usd_est": 0.0, "errors": 0})
+        u["requests"] += 1
+        total_tokens = int(total or 0)
+        if total_tokens <= 0:
+            total_tokens = int((tin or 0) + (tout or 0))
+        u["tokens"] += total_tokens
+        u["usd_est"] += _usd_est_from_tokens(tin, tout)
+        if (http_status and int(http_status) >= 400) or (error_type and str(error_type).strip()):
+            u["errors"] += 1
+
+    items = [
+        {
+            "user_id": uid,
+            "requests": int(v["requests"]),
+            "tokens": int(v["tokens"]),
+            "usd_est": float(v["usd_est"]),
+            "errors": int(v["errors"]),
+        }
+        for uid, v in agg.items()
+    ]
+    items.sort(key=lambda x: (x["usd_est"], x["tokens"]), reverse=True)
+    return {"days": days, "items": items[:limit]}
 
 
 @app.put("/users/{user_id}")

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-import httpx, os, json, time, logging, asyncio, random
+import httpx, os, json, time, logging, asyncio, random, uuid
 from urllib.parse import urlparse
 from common.policy import load_policy, get_user_role
 
@@ -40,9 +40,11 @@ USAGE_WRITER_URL = os.environ.get("USAGE_WRITER_URL", "http://usage-writer:8091/
 USAGE_WRITER_BASE = os.environ.get("USAGE_WRITER_BASE", "http://usage-writer:8091")
 USAGE_USED_URL = os.environ.get("USAGE_USED_URL", f"{USAGE_WRITER_BASE}/used")
 USAGE_LIMITS_URL = os.environ.get("USAGE_LIMITS_URL", f"{USAGE_WRITER_BASE}/limits")
+USAGE_TELEMETRY_URL = os.environ.get("USAGE_TELEMETRY_URL", f"{USAGE_WRITER_BASE}/telemetry")
 FORCE_NON_STREAM = os.environ.get("FORCE_NON_STREAM", "1") == "1"
 POLICY_PATH = os.environ.get("POLICY_PATH", "/ontogit_user/onto_policy.yml")
 ROLE_SOURCE = (os.environ.get("ONTOGIT_ROLE_SOURCE", "") or "").strip().lower()
+TELEMETRY_ENABLED = os.environ.get("ONTOGIT_TELEMETRY", "0") == "1"
 _MAX_CONCURRENCY = int(os.environ.get("OPENAI_PROXY_MAX_CONCURRENCY", "8") or "8")
 if _MAX_CONCURRENCY < 5:
     _MAX_CONCURRENCY = 5
@@ -66,6 +68,14 @@ async def post_usage(event: dict):
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
             await c.post(USAGE_WRITER_URL, json=event)
+    except Exception:
+        pass
+
+
+async def post_telemetry(event: dict):
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            await c.post(USAGE_TELEMETRY_URL, json=event)
     except Exception:
         pass
 
@@ -158,6 +168,16 @@ async def proxy(path: str, req: Request):
         headers["Authorization"] = f"Bearer {OPENAI_KEY}"
 
     body = await req.body()
+    req_id = _pick_first_header(req, ["x-request-id"]) or f"req_{uuid.uuid4().hex}"
+    model_hint = None
+    model = None
+    tokens_in = None
+    tokens_out = None
+    total_tokens = None
+    retry_count = 0
+    error_type = ""
+    http_status = None
+    t0 = time.time()
 
     # Если JSON — нормализуем stream/stream_options
     if body and ct and "application/json" in ct:
@@ -170,6 +190,7 @@ async def proxy(path: str, req: Request):
                         obj["stream"] = False
                     if obj.get("stream") is not True and "stream_options" in obj:
                         obj.pop("stream_options", None)
+                model_hint = obj.get("model")
                 body = json.dumps(obj).encode("utf-8")
         except Exception:
             pass
@@ -201,7 +222,9 @@ async def proxy(path: str, req: Request):
     # block only /v1/chat/completions when over limit
     if req.method.upper() == "POST" and path == "v1/chat/completions" and user_id:
         if limit_usd > 0 and used is not None and used >= limit_usd:
-            return JSONResponse(
+            http_status = 429
+            error_type = "429"
+            resp = JSONResponse(
                 status_code=429,
                 content={
                     "error": {
@@ -215,6 +238,26 @@ async def proxy(path: str, req: Request):
                 },
                 headers=limit_headers,
             )
+            if TELEMETRY_ENABLED:
+                latency_ms = int((time.time() - t0) * 1000)
+                asyncio.create_task(
+                    post_telemetry(
+                        {
+                            "ts": int(time.time()),
+                            "user_id": user_id,
+                            "model": model_hint,
+                            "request_id": req_id,
+                            "tokens_in": tokens_in,
+                            "tokens_out": tokens_out,
+                            "total_tokens": total_tokens,
+                            "http_status": http_status,
+                            "error_type": error_type,
+                            "retry_count": retry_count,
+                            "latency_ms": latency_ms,
+                        }
+                    )
+                )
+            return resp
 
     upstream_host = urlparse(url).hostname or "unknown"
     try:
@@ -228,7 +271,9 @@ async def proxy(path: str, req: Request):
             )
     except httpx.ConnectError:
         logger.error("upstream_connect_error host=%s code=connect_error", upstream_host)
-        return JSONResponse(
+        http_status = 502
+        error_type = "connect_error"
+        resp = JSONResponse(
             status_code=502,
             content={
                 "error": {
@@ -240,9 +285,31 @@ async def proxy(path: str, req: Request):
             },
             headers=limit_headers,
         )
+        if TELEMETRY_ENABLED:
+            latency_ms = int((time.time() - t0) * 1000)
+            asyncio.create_task(
+                post_telemetry(
+                    {
+                        "ts": int(time.time()),
+                        "user_id": user_id,
+                        "model": model_hint,
+                        "request_id": req_id,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "total_tokens": total_tokens,
+                        "http_status": http_status,
+                        "error_type": error_type,
+                        "retry_count": retry_count,
+                        "latency_ms": latency_ms,
+                    }
+                )
+            )
+        return resp
     except httpx.TimeoutException:
         logger.error("upstream_timeout_error host=%s code=timeout_error", upstream_host)
-        return JSONResponse(
+        http_status = 504
+        error_type = "504"
+        resp = JSONResponse(
             status_code=504,
             content={
                 "error": {
@@ -254,9 +321,31 @@ async def proxy(path: str, req: Request):
             },
             headers=limit_headers,
         )
+        if TELEMETRY_ENABLED:
+            latency_ms = int((time.time() - t0) * 1000)
+            asyncio.create_task(
+                post_telemetry(
+                    {
+                        "ts": int(time.time()),
+                        "user_id": user_id,
+                        "model": model_hint,
+                        "request_id": req_id,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "total_tokens": total_tokens,
+                        "http_status": http_status,
+                        "error_type": error_type,
+                        "retry_count": retry_count,
+                        "latency_ms": latency_ms,
+                    }
+                )
+            )
+        return resp
     except httpx.HTTPError:
         logger.error("upstream_http_error host=%s code=http_error", upstream_host)
-        return JSONResponse(
+        http_status = 502
+        error_type = "502"
+        resp = JSONResponse(
             status_code=502,
             content={
                 "error": {
@@ -268,6 +357,26 @@ async def proxy(path: str, req: Request):
             },
             headers=limit_headers,
         )
+        if TELEMETRY_ENABLED:
+            latency_ms = int((time.time() - t0) * 1000)
+            asyncio.create_task(
+                post_telemetry(
+                    {
+                        "ts": int(time.time()),
+                        "user_id": user_id,
+                        "model": model_hint,
+                        "request_id": req_id,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "total_tokens": total_tokens,
+                        "http_status": http_status,
+                        "error_type": error_type,
+                        "retry_count": retry_count,
+                        "latency_ms": latency_ms,
+                    }
+                )
+            )
+        return resp
 
     resp_bytes = upstream.content
 
@@ -292,8 +401,34 @@ async def proxy(path: str, req: Request):
                     "cost_usd": (pt/1000.0)*0.0025 + (ct2/1000.0)*0.01,
                 }
                 await post_usage(event)
+                tokens_in = pt
+                tokens_out = ct2
+                total_tokens = tt
         except Exception:
             pass
+
+    if TELEMETRY_ENABLED:
+        http_status = int(upstream.status_code)
+        if http_status in (429, 502, 504):
+            error_type = str(http_status)
+        latency_ms = int((time.time() - t0) * 1000)
+        asyncio.create_task(
+            post_telemetry(
+                {
+                    "ts": int(time.time()),
+                    "user_id": user_id,
+                    "model": model or model_hint,
+                    "request_id": req_id,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "total_tokens": total_tokens,
+                    "http_status": http_status,
+                    "error_type": error_type,
+                    "retry_count": retry_count,
+                    "latency_ms": latency_ms,
+                }
+            )
+        )
 
     return Response(
         content=resp_bytes,
