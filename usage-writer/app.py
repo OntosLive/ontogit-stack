@@ -156,8 +156,16 @@ async def sum_usd(user_id: str = "", from_ts: int | None = None, to_ts: int | No
 
 @app.post("/telemetry")
 async def telemetry(req: Request):
-    body = await req.json()
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
     ts = int(body.get("ts") or time.time())
+    def _to_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return None
     con = sqlite3.connect(DB)
     cur = con.cursor()
     cur.execute(
@@ -166,20 +174,20 @@ async def telemetry(req: Request):
           ts,user_id,model,request_id,tokens_in,tokens_out,total_tokens,http_status,error_type,
           retry_count,latency_ms
         )
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             ts,
             body.get("user_id"),
             body.get("model"),
             body.get("request_id"),
-            body.get("tokens_in"),
-            body.get("tokens_out"),
-            body.get("total_tokens"),
-            body.get("http_status"),
+            _to_int(body.get("tokens_in")),
+            _to_int(body.get("tokens_out")),
+            _to_int(body.get("total_tokens")),
+            _to_int(body.get("http_status")),
             body.get("error_type"),
-            body.get("retry_count"),
-            body.get("latency_ms"),
+            _to_int(body.get("retry_count")),
+            _to_int(body.get("latency_ms")),
         ),
     )
     con.commit()
