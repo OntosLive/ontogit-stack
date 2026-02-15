@@ -19,3 +19,7 @@ ops/state/*.tmp
 ops/state/LATEST_POINTER.txt
 
 PROMPT.txt
+
+# ops artifacts (handoff/state bundles)
+ops/state/
+ops/locks/
