@@ -17,6 +17,7 @@ services:
       ONTOGIT_DEV_FALLBACK_USER_ID: ${ONTOGIT_DEV_FALLBACK_USER_ID:-}
       USAGE_WRITER_BASE: ${USAGE_WRITER_BASE:-http://usage-writer:8091}
       ONTOGIT_LIMIT_MODE: ${ONTOGIT_LIMIT_MODE-soft}
+      ONTOGIT_RECALL_DEDUP: '1'
   openai-proxy:
     build:
       context: .
@@ -24,14 +25,15 @@ services:
     env_file:
     - .env
     environment:
-    - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
-    - USAGE_WRITER_URL=http://usage-writer:8091/usage
-    - USAGE_WRITER_BASE=http://usage-writer:8091
-    - FORCE_NON_STREAM=1
-    - POLICY_PATH=/ontogit_user/onto_policy.yml
-    - ONTOGIT_ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
-    - OPENWEBUI_BASE_URL=${OPENWEBUI_BASE_URL:-http://open-webui:8080}
-    - ONTOGIT_DEV_FALLBACK_USER_ID=${ONTOGIT_DEV_FALLBACK_USER_ID:-}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      USAGE_WRITER_URL: http://usage-writer:8091/usage
+      USAGE_WRITER_BASE: http://usage-writer:8091
+      FORCE_NON_STREAM: '1'
+      POLICY_PATH: /ontogit_user/onto_policy.yml
+      ONTOGIT_ROLE_SOURCE: ${ONTOGIT_ROLE_SOURCE:-}
+      OPENWEBUI_BASE_URL: ${OPENWEBUI_BASE_URL:-http://open-webui:8080}
+      ONTOGIT_DEV_FALLBACK_USER_ID: ${ONTOGIT_DEV_FALLBACK_USER_ID:-}
+      ONTOGIT_TELEMETRY: '1'
     ports:
     - 8088:8088
     restart: unless-stopped
@@ -70,6 +72,8 @@ services:
   memory-service:
     build: ./memory-service
     restart: unless-stopped
+    env_file:
+    - .env.local
     environment:
     - QDRANT_URL=http://qdrant:6333
     - ENABLE_GIT_COMMIT=1
@@ -81,10 +85,10 @@ services:
     - EMBED_BASE_URL=${EMBED_BASE_URL:-}
     - EMBED_API_KEY=${EMBED_API_KEY:-}
     - EMBED_MODEL=${EMBED_MODEL:-}
-    - ONTOS_SERVICE_AUTH_SECRET=${ONTOS_SERVICE_AUTH_SECRET}
     - ONTOGIT_DAILY_REQUEST_LIMIT=${ONTOGIT_DAILY_REQUEST_LIMIT-}
     - ONTOGIT_DAILY_TOKEN_LIMIT=${ONTOGIT_DAILY_TOKEN_LIMIT-}
     - ONTOGIT_LIMIT_MODE=${ONTOGIT_LIMIT_MODE-soft}
+    - ONTOGIT_RECALL_MAX_TOKENS=1500
     - ONTOGIT_ADMIN_USERS=${ONTOGIT_ADMIN_USERS-}
     - ONTOGIT_ROLE_SOURCE=${ONTOGIT_ROLE_SOURCE:-}
     - USAGE_DB=/ontogit_user/usage.db
