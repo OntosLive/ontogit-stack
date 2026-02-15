@@ -5,11 +5,18 @@ BACKEND=""
 MODE="unknown"
 
 if [ -f /etc/nginx/snippets/alba_switch_map.conf ]; then
-  BACKEND="$(rg -o "127\.0\.0\.1:(3000|3010)" /etc/nginx/snippets/alba_switch_map.conf 2>/dev/null | head -n 1 || true)"
+  BACKEND="$(
+    grep -Eo '127\.0\.0\.1:(3000|3010)' /etc/nginx/snippets/alba_switch_map.conf 2>/dev/null \
+      | head -n 1 || true
+  )"
 fi
 
 if [ -z "${BACKEND}" ] && command -v nginx >/dev/null 2>&1; then
-  BACKEND="$(nginx -T 2>/dev/null | rg -o "127\.0\.0\.1:(3000|3010)" | head -n 1 || true)"
+  BACKEND="$(
+    nginx -T 2>/dev/null \
+      | grep -Eo '127\.0\.0\.1:(3000|3010)' \
+      | head -n 1 || true
+  )"
 fi
 
 case "${BACKEND}" in
@@ -32,10 +39,10 @@ else
 fi
 
 echo ""
-echo "curl checks"
+echo "curl checks (3011=/v1/models)"
 for target in \
   "http://127.0.0.1:3010/api/version" \
-  "http://127.0.0.1:3011/" \
+  "http://127.0.0.1:3011/v1/models" \
   "http://127.0.0.1:3012/" \
   "https://alba.ontos.live/api/version"; do
   code="$(curl -fsS -o /dev/null -w '%{http_code}' "${target}" 2>/dev/null || true)"
