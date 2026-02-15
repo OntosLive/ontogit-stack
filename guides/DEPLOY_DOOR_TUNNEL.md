@@ -51,3 +51,12 @@ curl -fsS -o /dev/null -w '%{http_code}\n' https://alba.ontos.live/api/version
 
 - Bind tunnel ports to `127.0.0.1` only (never `0.0.0.0`).
 - Optional: add basic-auth at nginx for the door if needed.
+
+## STT Profiles
+
+Switch profiles with one command:
+
+```bash
+./scripts/ops/stt_profile_switch.sh gpu
+./scripts/ops/stt_profile_switch.sh cpu
+```

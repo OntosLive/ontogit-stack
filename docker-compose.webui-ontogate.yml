@@ -10,15 +10,20 @@ services:
     environment:
       OPENAI_API_BASE_URL: http://header-injector:8089
       ENABLE_WEBSOCKET_SUPPORT: 'false'
-      WHISPER_MODEL: large-v3
+      WHISPER_MODEL: ${ALBA_STT_MODEL:-large-v3}
       WHISPER_MODEL_DIR: /app/backend/data/cache/whisper/models
       WHISPER_LANGUAGE_AUTO_IF_RU: 1
-      WHISPER_BEAM_SIZE: 8
+      WHISPER_BEAM_SIZE: ${ALBA_STT_BEAM:-8}
       WHISPER_TEMPERATURE: 0
-      WHISPER_BEST_OF: 5
+      WHISPER_BEST_OF: ${ALBA_STT_BEST_OF:-5}
       WHISPER_INITIAL_PROMPT: ''
       RECALL_MAX_TOKENS: '1500'
+      # ALBA_GPU_ENV_BEGIN
+      # ALBA_GPU_ENV_END
+    # ALBA_GPU_BEGIN
+    # ALBA_GPU_END
     env_file:
+    - .env.stt
     - .env.local
 networks:
   ontogit-stack_default:
