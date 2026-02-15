@@ -2,6 +2,7 @@
 # ONTOS_FACTS_V1
 from .facts_mvp import router as facts_router
 import os
+import math
 import uuid
 import subprocess
 import hmac
@@ -15,6 +16,10 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from app.recall_mvp import embed_and_upsert_scene, recall_hits
+try:
+    import tiktoken  # type: ignore
+except Exception:
+    tiktoken = None
 from app.prefs_mvp import router as prefs_router  # ONTOS_PREFS_V1
 from common.policy import load_policy, get_user_role, get_daily_limits
 
@@ -57,6 +62,12 @@ ADMIN_USERS = {
     for u in (os.environ.get(ADMIN_USERS_ENV, "") or "").split(",")
     if u.strip()
 }
+ONTOGIT_RECALL_MAX_TOKENS = int(os.environ.get("ONTOGIT_RECALL_MAX_TOKENS", "1500") or 1500)
+ONTOGIT_RECALL_MAX_ITEMS = int(os.environ.get("ONTOGIT_RECALL_MAX_ITEMS", "8") or 8)
+ONTOGIT_RECALL_TRUNCATION_MODE = (
+    os.environ.get("ONTOGIT_RECALL_TRUNCATION_MODE", "hard") or "hard"
+).strip().lower()
+RECALL_PREAMBLE_TOKENS = 20
 
 
 @app.middleware("http")
@@ -115,6 +126,116 @@ def _day_start_ts() -> int:
 
 def _count_tokens(text: str) -> int:
     return len((text or "").split())
+
+
+_TIKTOKEN_ENCODER = None
+if tiktoken is not None:
+    try:
+        _TIKTOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        _TIKTOKEN_ENCODER = None
+
+
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    if _TIKTOKEN_ENCODER is not None:
+        try:
+            return len(_TIKTOKEN_ENCODER.encode(text))
+        except Exception:
+            pass
+    return int(math.ceil(len(text) / 4.0))
+
+
+def _truncate_text_to_tokens(text: str, max_tokens: int) -> str:
+    if max_tokens <= 0 or not text:
+        return ""
+    if _TIKTOKEN_ENCODER is not None:
+        try:
+            tokens = _TIKTOKEN_ENCODER.encode(text)
+            if len(tokens) <= max_tokens:
+                return text
+            return _TIKTOKEN_ENCODER.decode(tokens[:max_tokens])
+        except Exception:
+            pass
+    approx_chars = max_tokens * 4
+    if len(text) <= approx_chars:
+        return text
+    return text[:approx_chars]
+
+
+def _hit_text_parts(hit: "RecallHit") -> dict:
+    title = (hit.title or "").strip()
+    git_path = (hit.git_path or "").strip()
+    quote = (hit.quote or "").strip()
+    tags = ", ".join([t for t in (hit.tags or []) if str(t).strip()])
+    base = ""
+    if title:
+        base += f"Title: {title}\n"
+    if git_path:
+        base += f"Path: {git_path}\n"
+    if tags:
+        base += f"Tags: {tags}\n"
+    return {"base": base, "quote": quote}
+
+
+def _hit_text_full(hit: "RecallHit") -> str:
+    parts = _hit_text_parts(hit)
+    base = parts["base"]
+    quote = parts["quote"]
+    if quote:
+        return f"{base}Quote: {quote}\n"
+    return base
+
+
+def _truncate_recall_hits(hits: list["RecallHit"]) -> tuple[list["RecallHit"], int, bool]:
+    max_items = ONTOGIT_RECALL_MAX_ITEMS if ONTOGIT_RECALL_MAX_ITEMS > 0 else len(hits)
+    max_tokens = ONTOGIT_RECALL_MAX_TOKENS if ONTOGIT_RECALL_MAX_TOKENS > 0 else 0
+    budget = max_tokens - RECALL_PREAMBLE_TOKENS if max_tokens > 0 else None
+
+    kept: list[RecallHit] = []
+    tokens_used = 0
+    truncated = False
+
+    for hit in hits[:max_items]:
+        text = _hit_text_full(hit)
+        hit_tokens = _estimate_tokens(text)
+        if budget is not None and budget > 0 and tokens_used + hit_tokens > budget:
+            if ONTOGIT_RECALL_TRUNCATION_MODE == "soft":
+                truncated = True
+                break
+
+            parts = _hit_text_parts(hit)
+            base = parts["base"]
+            quote = parts["quote"]
+            base_tokens = _estimate_tokens(base)
+            remaining = budget - tokens_used - base_tokens
+            if remaining <= 0:
+                truncated = True
+                break
+            if quote:
+                truncated_quote = _truncate_text_to_tokens(quote, remaining)
+                hit.quote = truncated_quote
+                hit_tokens = _estimate_tokens(_hit_text_full(hit))
+            else:
+                hit_tokens = _estimate_tokens(_hit_text_full(hit))
+
+        kept.append(hit)
+        tokens_used += hit_tokens
+
+    if ONTOGIT_RECALL_TRUNCATION_MODE == "soft" and budget is not None and budget > 0 and tokens_used > budget:
+        truncated = True
+        while kept and tokens_used > budget:
+            removed = kept.pop()
+            tokens_used -= _estimate_tokens(_hit_text_full(removed))
+
+    return kept, max(tokens_used, 0), truncated
+
+
+def _set_recall_headers(response: Response, tokens_est: int, items: int, truncated: bool) -> None:
+    response.headers["X-Ontogit-Recall-Tokens-Est"] = str(tokens_est)
+    response.headers["X-Ontogit-Recall-Items"] = str(items)
+    response.headers["X-Ontogit-Recall-Truncated"] = "true" if truncated else "false"
 
 
 def _get_daily_usage(con: sqlite3.Connection, user_id: str) -> tuple[int, int]:
@@ -394,9 +515,17 @@ async def recall(req: RecallReq, request: Request, response: Response):
     if not getattr(req, 'force', False):
         if len(q) < int(os.getenv('RECALL_MIN_CHARS', '20')):
             _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
+            _set_recall_headers(response, 0, 0, False)
+            print(
+                f"[memory-service] recall_budget items=0 tokens_est=0 budget={ONTOGIT_RECALL_MAX_TOKENS} truncated=False"
+            )
             return RecallResp(hits=[])
         if q.lower() in ('ok','ок','ага','угу','да','понятно','принято','ага.','ок.','да.','угу.','понял'):
             _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
+            _set_recall_headers(response, 0, 0, False)
+            print(
+                f"[memory-service] recall_budget items=0 tokens_est=0 budget={ONTOGIT_RECALL_MAX_TOKENS} truncated=False"
+            )
             return RecallResp(hits=[])
     # END SERVER GATE
 
@@ -413,6 +542,10 @@ async def recall(req: RecallReq, request: Request, response: Response):
         )
     except Exception as e:
         _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
+        _set_recall_headers(response, 0, 0, False)
+        print(
+            f"[memory-service] recall_budget items=0 tokens_est=0 budget={ONTOGIT_RECALL_MAX_TOKENS} truncated=False"
+        )
         return RecallResp(hits=[])
     hits = []
     for r in results:
@@ -425,6 +558,11 @@ async def recall(req: RecallReq, request: Request, response: Response):
             quote=str(payload.get("quote") or payload.get("body_preview") or ""),
             tags=list(payload.get("tags") or []),
         ))
+    hits, tokens_est, truncated = _truncate_recall_hits(hits)
+    _set_recall_headers(response, tokens_est, len(hits), truncated)
+    print(
+        f"[memory-service] recall_budget items={len(hits)} tokens_est={tokens_est} budget={ONTOGIT_RECALL_MAX_TOKENS} truncated={truncated}"
+    )
     _record_usage(request, "recall", 200, tokens_in=tokens_in, tokens_out=0)
     return RecallResp(hits=hits)
 
