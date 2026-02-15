@@ -6,6 +6,13 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 **Quotas**: `docs/QUOTAS.md` (monthly limits, roles, admin workflow).
 **Reports**: `docs/REPORTS.md` (daily beta telemetry).
 **Backup/Restore**: `docs/BACKUP_RESTORE.md` (canonical safety ritual).
+**Alba door+tunnel**: `guides/DEPLOY_DOOR_TUNNEL.md` + `guides/NGINX_SWITCH_BLUE_GREEN.md`.
+
+## Alba door status (one command)
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+./scripts/ops/alba_status.sh
+```
 
 ## Deploy OpenWebUI (one command)
 ```bash

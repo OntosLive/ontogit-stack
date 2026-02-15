@@ -9,6 +9,16 @@ cd /home/ontoslive/ontos_work/ontogit-stack
 DAYS=14 ./scripts/report_daily.sh
 ```
 
+## Ops quick checks
+Alba door/tunnel runbook:
+- `guides/DEPLOY_DOOR_TUNNEL.md`
+- `guides/NGINX_SWITCH_BLUE_GREEN.md`
+
+One command status:
+```bash
+./scripts/ops/alba_status.sh
+```
+
 Artifacts are stored in `ops/state/<ts>_report_daily/`:
 - `raw.json`
 - `table.txt`
