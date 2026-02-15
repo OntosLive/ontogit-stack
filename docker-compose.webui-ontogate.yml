@@ -11,6 +11,8 @@ services:
       OPENAI_API_BASE_URL: http://header-injector:8089
       ENABLE_WEBSOCKET_SUPPORT: 'false'
       WHISPER_MODEL: ${ALBA_STT_MODEL:-large-v3}
+      WHISPER_DEVICE: ${ALBA_STT_DEVICE}
+      WHISPER_COMPUTE_TYPE: ${ALBA_STT_COMPUTE}
       WHISPER_MODEL_DIR: /app/backend/data/cache/whisper/models
       WHISPER_LANGUAGE_AUTO_IF_RU: 1
       WHISPER_BEAM_SIZE: ${ALBA_STT_BEAM:-8}
@@ -20,10 +22,6 @@ services:
       RECALL_MAX_TOKENS: '1500'
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      # ALBA_GPU_ENV_BEGIN
-      # ALBA_GPU_ENV_END
-    # ALBA_GPU_BEGIN
-    # ALBA_GPU_END
     env_file:
     - .env.stt
     - .env.local
