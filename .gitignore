@@ -23,3 +23,6 @@ PROMPT.txt
 # ops artifacts (handoff/state bundles)
 ops/state/
 ops/locks/
+
+# local generated systemd units
+alba-revtunnel*.service
