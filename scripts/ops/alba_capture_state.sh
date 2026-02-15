@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 TS="$(date +%Y%m%d_%H%M%S)"
-ART_DIR="${STACK_DIR}/ops/state/${TS}_alba_capture"
+BASE_DIR="$(pwd)"
+OUTDIR="${OUTDIR:-${BASE_DIR}/ops/state}"
+ART_DIR="${OUTDIR}/${TS}_alba_capture"
 NGINX_DIR="${ART_DIR}/nginx"
 
 mkdir -p "${ART_DIR}" "${NGINX_DIR}"
