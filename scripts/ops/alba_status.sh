@@ -39,11 +39,11 @@ else
 fi
 
 echo ""
-echo "curl checks (3011=/v1/models)"
+echo "curl checks (3011=/v1/models, 3012=/report/daily?days=7)"
 for target in \
   "http://127.0.0.1:3010/api/version" \
   "http://127.0.0.1:3011/v1/models" \
-  "http://127.0.0.1:3012/" \
+  "http://127.0.0.1:3012/report/daily?days=7" \
   "https://alba.ontos.live/api/version"; do
   code="$(curl -fsS -o /dev/null -w '%{http_code}' "${target}" 2>/dev/null || true)"
   printf '%s -> %s\n' "${target}" "${code:-ERR}"
