@@ -3,6 +3,8 @@ set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then

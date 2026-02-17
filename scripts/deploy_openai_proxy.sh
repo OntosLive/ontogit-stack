@@ -4,14 +4,39 @@ set -euo pipefail
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 COMMIT_REF="${COMMIT:-HEAD}"
 OPENAI_PROXY_PORT="${OPENAI_PROXY_PORT:-8088}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+EXPECTED_NETWORK="${COMPOSE_PROJECT_NAME}_default"
+NETWORK_REGEX="^${COMPOSE_PROJECT_NAME}(_${COMPOSE_PROJECT_NAME})?_default$"
 TS="$(date +%Y%m%d_%H%M%S)"
 ART_DIR="${STACK_DIR}/ops/state/${TS}_deploy_openai_proxy"
 LOG_FILE="${ART_DIR}/deploy.log"
 WORKTREE_DIR=""
 WORKTREE_CREATED=0
-DOCKER_BIN=""
 DOCKER_CMD=()
 COMPOSE_CMD=()
+export COMPOSE_PROJECT_NAME
+
+preflight_networks() {
+  local line=""
+  local name=""
+  local -a bad_networks=()
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    name="${line%%$'\t'*}"
+    if [ "${name}" != "${EXPECTED_NETWORK}" ]; then
+      bad_networks+=("${name}")
+    fi
+  done < <("${DOCKER_CMD[@]}" network ls --format '{{.Name}}' | rg "${NETWORK_REGEX}" || true)
+
+  if [ "${#bad_networks[@]}" -gt 0 ]; then
+    echo "ERROR: duplicate ontogit-stack default network(s) detected: ${bad_networks[*]}" | tee -a "${LOG_FILE}"
+    echo "Remediation:" | tee -a "${LOG_FILE}"
+    echo "  1) Stop stack: docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml down" | tee -a "${LOG_FILE}"
+    echo "  2) Remove empty stray network(s): docker network rm ${bad_networks[*]}" | tee -a "${LOG_FILE}"
+    echo "  3) Redeploy via ritual: ./scripts/deploy_openai_proxy.sh" | tee -a "${LOG_FILE}"
+    exit 1
+  fi
+}
 
 beep_fallback() {
   printf '\a' || true
@@ -62,23 +87,26 @@ trap cleanup EXIT
 
 mkdir -p "${ART_DIR}"
 
-DOCKER_BIN="$(command -v docker || true)"
-if [ -z "${DOCKER_BIN}" ]; then
+if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found in PATH" | tee -a "${LOG_FILE}"
   exit 1
 fi
 
-DOCKER_CMD=("${DOCKER_BIN}")
+DOCKER_CMD=(docker)
 if ! "${DOCKER_CMD[@]}" ps >/dev/null 2>&1; then
-  echo "docker ps failed; falling back to sudo ${DOCKER_BIN} (Docker Desktop WSL should run docker as user; sudo may break socket/context)." | tee -a "${LOG_FILE}"
-  DOCKER_CMD=(sudo "${DOCKER_BIN}")
+  echo "ERROR: docker daemon is not accessible via plain docker (sudo fallback disabled)." | tee -a "${LOG_FILE}"
+  echo "Fix: ensure this user can run docker (docker group / socket permissions), then re-run ./scripts/deploy_openai_proxy.sh." | tee -a "${LOG_FILE}"
+  exit 1
 fi
 
-COMPOSE_CMD=("${DOCKER_BIN}" "compose")
+COMPOSE_CMD=("${DOCKER_CMD[@]}" "compose")
 if ! "${COMPOSE_CMD[@]}" version >/dev/null 2>&1; then
-  echo "docker compose failed without sudo; falling back to sudo ${DOCKER_BIN} compose." | tee -a "${LOG_FILE}"
-  COMPOSE_CMD=(sudo "${DOCKER_BIN}" "compose")
+  echo "ERROR: docker compose is not accessible via plain docker compose (sudo fallback disabled)." | tee -a "${LOG_FILE}"
+  exit 1
 fi
+
+echo "[0/8] Network preflight (${EXPECTED_NETWORK})" | tee -a "${LOG_FILE}"
+preflight_networks
 
 echo "[1/8] Resolve commit ${COMMIT_REF}" | tee -a "${LOG_FILE}"
 RESOLVED_SHA="$(git -C "${STACK_DIR}" rev-parse --verify "${COMMIT_REF}^{commit}")"

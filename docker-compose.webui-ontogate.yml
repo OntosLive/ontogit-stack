@@ -1,8 +1,6 @@
 services:
   open-webui:
-    image: open-webui-ontogate:a95e67b96
-    networks:
-    - ontogit-stack_default
+    image: open-webui-ontogate:2fcef38e2
     ports:
     - 3000:8080
     volumes:
@@ -28,6 +26,3 @@ services:
     - .env.stt
     - .env.local
     gpus: all
-networks:
-  ontogit-stack_default:
-    external: true

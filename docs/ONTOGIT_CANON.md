@@ -23,6 +23,9 @@
 - Deploy openai-proxy only via ritual script: `scripts/deploy_openai_proxy.sh`
 - Deployment guide: `docs/DEPLOY_OPENAI_PROXY.md`
 - Deployment artifacts: `ops/state/<ts>_deploy_openai_proxy/`
+- Compose project name is fixed: `COMPOSE_PROJECT_NAME=ontogit-stack` (repo `.env`).
+- One-button health ritual: `bash scripts/health.sh`.
+- Compose default network is pinned to `ontogit-stack_default`, and deploy rituals fail-fast if stray matching default networks are detected.
 - Daily beta report: `scripts/report_daily.sh` (docs: `docs/REPORTS.md`)
 - Backup/restore: `scripts/backup.sh`, `scripts/restore.sh` (docs: `docs/BACKUP_RESTORE.md`)
 - Principle: deploy only through ritual, not manual compose/image edits.

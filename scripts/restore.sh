@@ -3,6 +3,8 @@ set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
 BACKUP_DIR="${BACKUP_DIR:-}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 if [ -z "${BACKUP_DIR}" ]; then
   echo "BACKUP_DIR is required (e.g., BACKUP_DIR=ops/state/<ts>_backup)"

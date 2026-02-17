@@ -107,3 +107,6 @@ services:
     - 127.0.0.1:8090:8090
 volumes:
   qdrant_storage: null
+networks:
+  default:
+    name: ontogit-stack_default

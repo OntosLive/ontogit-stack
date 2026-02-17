@@ -10,6 +10,8 @@ MODE="$1"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STACK_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 TS="$(date +%Y%m%d_%H%M%S)"
 STATE_DIR="${STACK_DIR}/ops/state/${TS}_stt_profile_switch"
 mkdir -p "${STATE_DIR}"

@@ -6,6 +6,8 @@ BASE_URL="http://127.0.0.1:8089"
 USAGE_URL="http://127.0.0.1:8091"
 DB_PATH="$STACK_DIR/openwebui-data/usage.db"
 ENV_FILE="$STACK_DIR/.env"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing .env at $ENV_FILE"

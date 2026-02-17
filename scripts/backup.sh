@@ -2,6 +2,7 @@
 set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
 TS="$(date +%Y%m%d_%H%M%S)"
 ART_DIR="${STACK_DIR}/ops/state/${TS}_backup"
 CONFIG_DIR="${ART_DIR}/config"
@@ -10,6 +11,7 @@ OUT="${ART_DIR}"
 DOCKER_BIN=""
 DOCKER_CMD=()
 COMPOSE_CMD=()
+export COMPOSE_PROJECT_NAME
 
 notify_ok() {
   if command -v paplay >/dev/null 2>&1; then

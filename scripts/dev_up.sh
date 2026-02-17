@@ -6,6 +6,8 @@ WEBUI_DIR="/home/ontoslive/ontos_work/open-webui-src"
 PROFILE="${DEV_PROFILE:-minimal}"
 BUILD="${DEV_BUILD:-0}"
 MARKER_DIR="${STACK_DIR}/ops/state"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then

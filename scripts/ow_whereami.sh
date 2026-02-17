@@ -4,6 +4,8 @@ set -euo pipefail
 LOCAL_PATH="/home/ontoslive/ontos_data/openwebui-data"
 VPS_LINK_PATH="/home/ontoslive/ontos_data/openwebui-data-vps-current"
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
@@ -25,23 +27,28 @@ elif [ -f "${STACK_DIR}/.env.local" ] && rg -q '^ONTOS_SERVICE_AUTH_SECRET=\S' "
 fi
 echo "service_auth_secret: ${SECRET_STATUS}"
 
-PS_LINE="$($DOCKER_CMD ps --filter name='^open-webui$' --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' | head -n1 || true)"
+WEBUI_CONTAINER="${COMPOSE_PROJECT_NAME}-open-webui-1"
+if ! $DOCKER_CMD inspect "${WEBUI_CONTAINER}" >/dev/null 2>&1; then
+  WEBUI_CONTAINER="open-webui"
+fi
+
+PS_LINE="$($DOCKER_CMD ps --filter "name=^${WEBUI_CONTAINER}$" --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' | head -n1 || true)"
 if [ -z "${PS_LINE}" ]; then
-  echo "open-webui container not found (expected name: open-webui)"
+  echo "open-webui container not found (expected name: ${COMPOSE_PROJECT_NAME}-open-webui-1 or open-webui)"
   exit 1
 fi
 
 echo "open-webui: ${PS_LINE}"
 
-PROJECT_LABEL="$($DOCKER_CMD inspect open-webui --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
-CONFIG_LABEL="$($DOCKER_CMD inspect open-webui --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)"
+PROJECT_LABEL="$($DOCKER_CMD inspect "${WEBUI_CONTAINER}" --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
+CONFIG_LABEL="$($DOCKER_CMD inspect "${WEBUI_CONTAINER}" --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' 2>/dev/null || true)"
 echo "compose.project: ${PROJECT_LABEL:-unknown}"
 echo "compose.config_files: ${CONFIG_LABEL:-unknown}"
 
 echo "mounts:"
-$DOCKER_CMD inspect open-webui --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+$DOCKER_CMD inspect "${WEBUI_CONTAINER}" --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
 
-DATA_MOUNT="$($DOCKER_CMD inspect open-webui --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+DATA_MOUNT="$($DOCKER_CMD inspect "${WEBUI_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/app/backend/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
 if [ -z "${DATA_MOUNT}" ]; then
   echo "active_universe: unknown (no /app/backend/data mount found)"
 else
@@ -55,7 +62,7 @@ else
   fi
 fi
 
-NETWORKS="$($DOCKER_CMD inspect open-webui --format '{{range $name, $_ := .NetworkSettings.Networks}}{{printf "%s\n" $name}}{{end}}' 2>/dev/null || true)"
+NETWORKS="$($DOCKER_CMD inspect "${WEBUI_CONTAINER}" --format '{{range $name, $_ := .NetworkSettings.Networks}}{{printf "%s\n" $name}}{{end}}' 2>/dev/null || true)"
 echo "networks:"
 if [ -n "${NETWORKS}" ]; then
   printf '%s\n' "${NETWORKS}"

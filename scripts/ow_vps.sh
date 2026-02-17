@@ -7,6 +7,8 @@ DATA_DIR="/home/ontoslive/ontos_data"
 VPS_CURRENT_LINK="${DATA_DIR}/openwebui-data-vps-current"
 VPS_GLOB="${DATA_DIR}/openwebui-data-vps-20*"
 VPS_OVERRIDE_FILE="${WEBUI_DIR}/docker-compose.vpsdata.override.yaml"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-ontogit-stack}"
+export COMPOSE_PROJECT_NAME
 
 DOCKER_CMD="docker"
 if ! docker ps >/dev/null 2>&1; then
