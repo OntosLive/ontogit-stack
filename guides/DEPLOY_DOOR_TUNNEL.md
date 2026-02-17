@@ -2,6 +2,15 @@
 
 This is the canonical door+tunnel model for `alba.ontos.live`.
 
+## One command restore
+
+Run on the local machine (where OpenWebUI is on `127.0.0.1:3000`):
+
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+bash scripts/ops/alba_up.sh
+```
+
 ## Topology
 
 - Door = VPS nginx + HTTPS (public).
@@ -36,6 +45,25 @@ Ports:
 ## Recommended: systemd + autossh
 
 Prefer an `autossh` systemd unit for resilience. See `scripts/ops/alba_local_tunnel_unit_install.sh` to generate a ready unit file.
+
+## Common failure: `502` means tunnel is down
+
+If `https://alba.ontos.live` returns `502 Bad Gateway` while local `http://127.0.0.1:3000/api/version` is OK, nginx is usually pointed to green (`127.0.0.1:3010`) but reverse tunnel is not alive.
+
+Exact checks:
+
+```bash
+# local
+curl -fsS http://127.0.0.1:3000/api/version
+systemctl status alba-revtunnel.service --no-pager
+
+# VPS
+ss -ltnp | grep :3010
+curl -fsS http://127.0.0.1:3010/api/version
+
+# public
+curl -fsS https://alba.ontos.live/api/version
+```
 
 ## Smoke tests (VPS)
 

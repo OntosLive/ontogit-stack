@@ -8,11 +8,19 @@ This repo contains the **OntoGit stack** and its **OpenWebUI integration**. It i
 **Backup/Restore**: `docs/BACKUP_RESTORE.md` (canonical safety ritual).
 **Alba door+tunnel**: `guides/DEPLOY_DOOR_TUNNEL.md` + `guides/NGINX_SWITCH_BLUE_GREEN.md`.
 
+## Restore alba.ontos.live (one command)
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+bash scripts/ops/alba_up.sh
+```
+For green mode, VPS nginx upstream is `127.0.0.1:3010`; that `3010` endpoint is provided by local `alba-revtunnel.service` forwarding local OpenWebUI `127.0.0.1:3000`.
+
 ## Alba door status (one command)
 ```bash
 cd /home/ontoslive/ontos_work/ontogit-stack
-./scripts/ops/alba_status.sh
+bash scripts/ops/alba_status.sh
 ```
+To diagnose door+tunnel only: `bash scripts/ops/alba_status.sh`.
 
 ## Deploy OpenWebUI (one command)
 ```bash
@@ -20,6 +28,7 @@ cd /home/ontoslive/ontos_work/ontogit-stack
 ./scripts/deploy_openwebui.sh
 COMMIT=<sha> ./scripts/deploy_openwebui.sh
 ```
+Compose project name is pinned in `.env`: `COMPOSE_PROJECT_NAME=ontogit-stack`.
 See: `docs/DEPLOY_WEBUI.md`
 
 ## Deploy openai-proxy (one command)
@@ -29,6 +38,13 @@ cd /home/ontoslive/ontos_work/ontogit-stack
 COMMIT=<sha> ./scripts/deploy_openai_proxy.sh
 ```
 See: `docs/DEPLOY_OPENAI_PROXY.md`
+
+## Health check (one command)
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+bash scripts/health.sh
+```
+After deploy run `bash scripts/health.sh`; if it fails, do not manually connect Docker networks.
 
 ## Governance
 - Governance: see `docs/governance/README.md`
@@ -118,6 +134,7 @@ AUTO_ROLLBACK=YES /home/ontoslive/ontos_work/ontogit-stack/scripts/autofix_smoke
 ## OpenWebUI runtime image (version source of truth)
 - The frontend `package.json` version may differ from the backend banner; runtime is defined by the Docker image tag.
 - Current image tag: `open-webui-ontogate:5f3b84105`
+- `docker-compose.webui-ontogate.yml` is part of deploy state (it pins the active OpenWebUI image tag).
 - Run (pins the runtime image via compose override):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --force-recreate open-webui
