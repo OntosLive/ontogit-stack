@@ -239,6 +239,27 @@ ONTOGIT_ADMIN_USERS=admin,admin2
 3) `/commit` и `/recall` работают через backend proxy
 4) В `usage.db` есть события с корректным `user_id`
 
+## Smoke-test v1
+- Canonical command:
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+bash scripts/ops/smoke_v1.sh
+```
+- Purpose:
+  - Runs source-of-truth checks:
+    - `bash scripts/ops/alba_status.sh`
+    - `bash scripts/health.sh`
+  - Adds STT runtime DB checks in `webui.db`:
+    - `audio.stt.whisper_model == "medium"`
+    - `audio.stt.whisper_beam_size`, `audio.stt.whisper_best_of`, `audio.stt.whisper_vad_filter` are present
+    - No users with `settings.ui.audio.stt.engine == "web"`
+- Artifacts:
+  - `ops/state/<ts>_smoke_v1/details.log` (detailed execution log)
+  - `ops/state/<ts>_smoke_v1/summary.txt` (short summary)
+- Exit code:
+  - `0` if all checks are green
+  - `1` if at least one check is red
+
 ## Local Dev Ops Pack
 - Скрипты (ontogit-stack/scripts):
   - `dev_bootstrap.sh` — создать локальные папки и `.env.local`
