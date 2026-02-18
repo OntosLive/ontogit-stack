@@ -69,6 +69,19 @@
   - Top-right chat menu:
     - hide/trim `...` actions in Kelia (no share/upload/tags/overview entries).
 
+### Kelia v1.2 — Control Surface Policy (ChatGPT-like)
+- No Admin Surface:
+  - no admin panel/surface/entrypoints to `/admin` in Kelia.
+- Single User Control Point:
+  - only one user control point: user menu in left-bottom sidebar footer.
+  - no top-right user avatar/menu in Kelia.
+  - no top-right overflow/ellipsis menu (`...`) in Kelia.
+- User menu contents (Kelia):
+  - keep only Theme, Language, optional UI scale, Account/Logout.
+- Acceptance:
+  - in Kelia, user menu exists only in left-bottom sidebar footer; absent in top-right.
+  - no admin surface in Kelia.
+
 ## STT Canon (local whisper CUDA)
 - Base mode:
   - `WHISPER_MODEL=medium`
