@@ -31,6 +31,19 @@ COMMIT=<sha> ./scripts/deploy_openwebui.sh
 Compose project name is pinned in `.env`: `COMPOSE_PROJECT_NAME=ontogit-stack`.
 See: `docs/DEPLOY_WEBUI.md`
 
+## Git Sync Model (dev/release)
+- `dev` = local development branch (default branch on GitHub).
+- `release` = VPS-only branch; pull on VPS only by explicit decision.
+- Promote flow: merge `dev -> release` locally, then push.
+- VPS release flow:
+```bash
+git checkout release
+git pull --ff-only
+cd /home/ontoslive/ontos_work/ontogit-stack
+./scripts/deploy_openwebui.sh
+```
+- `scripts/deploy_openwebui.sh` is already smoke-gated (`BEFORE/AFTER`); do not wrap release with manual smoke.
+
 ## Deploy openai-proxy (one command)
 ```bash
 cd /home/ontoslive/ontos_work/ontogit-stack
