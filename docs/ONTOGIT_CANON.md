@@ -30,18 +30,33 @@
 - Backup/restore: `scripts/backup.sh`, `scripts/restore.sh` (docs: `docs/BACKUP_RESTORE.md`)
 - Principle: deploy only through ritual, not manual compose/image edits.
 
-## Branding / App Identity (Ontos.Live)
-- Runtime title: `Ontos.Live`.
-- PWA manifest:
-  - `name=Ontos.Live`
-  - `short_name=alba`
-  - icons: `alba-icon-192.png`, `alba-icon-512.png`.
-- UI/loader/about rule:
-  - do not show `Open WebUI` in user-facing branding text.
-  - use `Ontos.Live` branding tokens/files in `src/lib/config/branding.ts`, `src/app.html`, `static/static/loader.js`, `static/static/site.webmanifest`.
-- Cache-bust rule (mandatory for branding updates):
-  - rename icon/manifest assets when branding changes.
-  - hard-reload browser after deploy (manifest/icon/loader are aggressively cached).
+## Branding Invariant (Never Regress)
+- App naming is fixed:
+  - app name: `Ontos.Live` (document title + PWA `name`).
+  - PWA `short_name`: `alba`.
+- Icon/logo identity is fixed:
+  - Alba icon/logo everywhere: favicon, PWA icons, loader/splash, UI logo.
+  - canonical icon files: `alba-icon-192.png`, `alba-icon-512.png`.
+- String policy:
+  - do not expose `Open WebUI` in runtime UI/loader/about branding.
+- Source-of-truth files:
+  - `src/app.html`
+  - `static/static/site.webmanifest`
+  - `static/static/loader.js`
+  - `src/lib/config/branding.ts`
+- Acceptance checklist:
+  - title is `Ontos.Live`
+  - manifest `name` is `Ontos.Live`
+  - manifest `short_name` is `alba`
+  - manifest icons point to Alba icons (`alba-icon-192.png`, `alba-icon-512.png`)
+  - loader/splash/logo uses Alba identity
+  - no `Open WebUI` branding text remains
+- Cache-bust + recovery:
+  - rename manifest/icon assets on branding change (cache-bust by filename).
+  - if stale branding persists:
+    - unregister service workers
+    - clear site data/storage
+    - hard reload.
 
 ## Kelia UI Profile (server-driven)
 - `ui_profile` is user-scoped, not app-scoped.
@@ -108,6 +123,7 @@
   - deploy
   - `smoke_v1 AFTER` (abort on fail).
 - Mandatory post-release check: successful `smoke_v1 AFTER`.
+- Mandatory post-release UI-smoke includes Branding Invariant checklist (title/manifest/icons/loader/no-Open-WebUI).
 
 ## Incident Playbooks + Smoke
 - Incident Playbooks are treated as system scenes (canonical operational memory).
