@@ -30,6 +30,96 @@
 - Backup/restore: `scripts/backup.sh`, `scripts/restore.sh` (docs: `docs/BACKUP_RESTORE.md`)
 - Principle: deploy only through ritual, not manual compose/image edits.
 
+## Branding / App Identity (Ontos.Live)
+- Runtime title: `Ontos.Live`.
+- PWA manifest:
+  - `name=Ontos.Live`
+  - `short_name=alba`
+  - icons: `alba-icon-192.png`, `alba-icon-512.png`.
+- UI/loader/about rule:
+  - do not show `Open WebUI` in user-facing branding text.
+  - use `Ontos.Live` branding tokens/files in `src/lib/config/branding.ts`, `src/app.html`, `static/static/loader.js`, `static/static/site.webmanifest`.
+- Cache-bust rule (mandatory for branding updates):
+  - rename icon/manifest assets when branding changes.
+  - hard-reload browser after deploy (manifest/icon/loader are aggressively cached).
+
+## Kelia UI Profile (server-driven)
+- `ui_profile` is user-scoped, not app-scoped.
+- `ui_profile=kelia` is derived from OpenWebUI group membership:
+  - accepted group names: `келья`, `kelia` (case-insensitive).
+- Global `ui_profile` in app config is forbidden.
+- Kelia v1.1 specification:
+  - Sidebar:
+    - required: `New chat`, `Search`, `Chat list (history)`.
+    - forbidden: folders/channels/notes/workspace/models entries.
+    - chat list style: no chat icons, no date/time labels.
+  - Chat stream:
+    - flat timeline (ChatGPT-like).
+    - no headers (`Вы`/author/timestamp), no avatars, no edit pencil.
+    - no message TTS/read-aloud controls.
+  - Reactions:
+    - only `мурашки` button.
+    - hide like/dislike.
+    - `мурашки` action = feedback + `POST /api/v1/ontogit_commit` with `reason=goosebumps`.
+  - Input:
+    - keep STT mic (voice input).
+    - disable voice output/call/TTS modes.
+    - attachments disabled.
+    - settings reduced to `Ontos.Live UI`: theme, language, UI scale.
+  - Top-right chat menu:
+    - hide/trim `...` actions in Kelia (no share/upload/tags/overview entries).
+
+## STT Canon (local whisper CUDA)
+- Base mode:
+  - `WHISPER_MODEL=medium`
+  - CUDA device
+  - `WHISPER_COMPUTE_TYPE=float16`.
+- Web Speech (`SpeechRecognition`) is OFF by default.
+- Web Speech can be enabled only by explicit debug flag; implicit fallback is forbidden.
+- MIME selection rule for recording:
+  - select first valid MIME from intersection of:
+    - backend `supported_content_types`
+    - `MediaRecorder.isTypeSupported(...)`.
+  - if intersection is empty: return explicit error; do not fallback to Web Speech.
+- Guardrail:
+  - canonical script: `scripts/ops/stt_guard.sh`.
+  - canonicalizes STT config and removes user overrides `settings.ui.audio.stt.engine='web'`.
+- Known class-0 incident:
+  - symptom `one word / wrong language / garbage transcript` is commonly caused by OS/browser default microphone switching.
+
+## Release Canon (One EntryPoint)
+- Single OpenWebUI release entrypoint: `scripts/deploy_openwebui.sh`.
+- Manual `docker build`, manual compose image pin edits, manual partial deploy flows are forbidden.
+- `scripts/deploy_openwebui.sh` is smoke-gated:
+  - `smoke_v1 BEFORE` (abort on fail)
+  - deploy
+  - `smoke_v1 AFTER` (abort on fail).
+- Mandatory post-release check: successful `smoke_v1 AFTER`.
+
+## Incident Playbooks + Smoke
+- Incident Playbooks are treated as system scenes (canonical operational memory).
+- Canonical smoke command:
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+bash scripts/ops/smoke_v1.sh
+```
+- `smoke_v1` artifacts:
+  - `ops/state/<ts>_smoke_v1/details.log`
+  - `ops/state/<ts>_smoke_v1/summary.txt`.
+- `smoke_v1` status model:
+  - `PASS`, `WARN`, `FAIL` with counts in summary.
+  - exit code `1` only if `FAIL>0`; `WARN` does not fail smoke.
+- STT source-of-truth for smoke:
+  - `docker compose -f docker-compose.yml -f docker-compose.webui-ontogate.yml config` (`open-webui.environment`) for `WHISPER_*`.
+  - DB check only for `$.audio.stt.whisper_model` (config id=1).
+  - hard requirement: `web_override_count == 0` for user settings override.
+- `health.sh` degradation rule inside smoke:
+  - if docker tooling is unavailable (daemon/socket/permission class errors), mark as `WARN`, not `FAIL`.
+- `alba_status.sh` is mode-aware:
+  - `mode=door_tunnel` if `3010` listening or `https://alba.ontos.live/api/version` reachable.
+  - `mode=local_only` if local `127.0.0.1:3000` reachable and no door-tunnel evidence.
+  - mode-irrelevant checks are skipped (no false `000` negatives in `local_only`).
+
 ## 0) Текущий этап и ограничения
 - Никаких новых автоматических «чувствительных» триггеров на возбуждение/резонанс.
 - Recall на текущем этапе считается ручным инструментом, не автономным агентом.
@@ -249,16 +339,19 @@ bash scripts/ops/smoke_v1.sh
   - Runs source-of-truth checks:
     - `bash scripts/ops/alba_status.sh`
     - `bash scripts/health.sh`
-  - Adds STT runtime DB checks in `webui.db`:
-    - `audio.stt.whisper_model == "medium"`
-    - `audio.stt.whisper_beam_size`, `audio.stt.whisper_best_of`, `audio.stt.whisper_vad_filter` are present
-    - No users with `settings.ui.audio.stt.engine == "web"`
+  - Performs STT env-first checks:
+    - compose source-of-truth (`open-webui.environment`) for `WHISPER_MODEL`, `WHISPER_BEAM_SIZE`, `WHISPER_BEST_OF`, `WHISPER_VAD_FILTER`
+    - DB model check (`config.id=1`, `$.audio.stt.whisper_model`)
+    - no users with `settings.ui.audio.stt.engine == "web"`
 - Artifacts:
   - `ops/state/<ts>_smoke_v1/details.log` (detailed execution log)
   - `ops/state/<ts>_smoke_v1/summary.txt` (short summary)
+- Summary semantics:
+  - includes `PASS/WARN/FAIL` lines and counts.
+  - `WARN` does not fail smoke; only `FAIL` fails smoke.
 - Exit code:
-  - `0` if all checks are green
-  - `1` if at least one check is red
+  - `0` if `FAIL=0`
+  - `1` if `FAIL>0`
 
 ## Local Dev Ops Pack
 - Скрипты (ontogit-stack/scripts):
@@ -299,3 +392,35 @@ bash scripts/ops/smoke_v1.sh
 ## Dev profiles
 - `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.
 - `DEV_PROFILE=full`: includes ollama, optional build with `DEV_BUILD=1`.
+
+## Collaboration Model (User + Assistant + Codex)
+- Source-of-truth questions (`where/how in system`) are resolved by Codex via repo/canon extraction.
+- Role split:
+  - User: vector, priority, acceptance.
+  - Assistant: architecture/canon decisions.
+  - Codex: code/config extraction, patching, command execution, diffs.
+- Canon-first rule:
+  - patch -> commit -> canon update -> one build/release.
+  - avoid rebuild per micro-change unless explicitly required by incident handling.
+
+## Handoff (2026-02-18)
+- Current deployed image tag: `open-webui-ontogate:0cc00978f`.
+- Canonical release entrypoint: `./scripts/deploy_openwebui.sh`.
+- Last smoke state dirs:
+  - pre: `/home/ontoslive/ontos_work/ontogit-stack/ops/state/20260218_175526_smoke_v1`
+  - post: `/home/ontoslive/ontos_work/ontogit-stack/ops/state/20260218_175822_smoke_v1`
+- Last smoke result (both pre/post): `pass=4 warn=0 fail=0`
+  - `PASS | bash scripts/ops/alba_status.sh`
+  - `PASS | bash scripts/health.sh`
+  - `PASS | No users with settings.ui.audio.stt.engine='web'`
+  - `PASS | STT env-first: db_model=medium compose_model=medium compose_beam=5 compose_best_of=3 compose_vad=0`
+- Open tasks (Kelia v1.1 UI):
+  - keep chat list in sidebar for Kelia.
+  - remove chat headers/timestamps/avatars/edit/TTS in message stream.
+  - keep STT mic in input; keep voice output modes disabled.
+  - keep `мурашки` visible as sole reaction (no like/dislike).
+  - hide top-right `...` chat menu in Kelia.
+  - remove chat icons/time labels in sidebar list.
+- Reminder:
+  - do not rebuild per change.
+  - canonical flow: patch -> commit -> canon -> one build.
