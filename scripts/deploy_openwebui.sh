@@ -2,6 +2,7 @@
 set -euo pipefail
 
 STACK_DIR="/home/ontoslive/ontos_work/ontogit-stack"
+SMOKE_CMD=(bash "${STACK_DIR}/scripts/ops/smoke_v1.sh")
 WEBUI_SRC="/home/ontoslive/ontos_work/open-webui-src"
 COMPOSE_PIN_FILE="${STACK_DIR}/docker-compose.webui-ontogate.yml"
 COMMIT_REF="${COMMIT:-HEAD}"
@@ -80,6 +81,12 @@ trap 'on_error "$LINENO" "$?"' ERR
 trap cleanup EXIT
 
 mkdir -p "${ART_DIR}"
+
+echo "[pre] smoke_v1 BEFORE" | tee -a "${LOG_FILE}"
+if ! "${SMOKE_CMD[@]}" | tee -a "${LOG_FILE}"; then
+  echo "smoke_v1 BEFORE failed; abort deploy" | tee -a "${LOG_FILE}"
+  exit 1
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found in PATH" | tee -a "${LOG_FILE}"
@@ -213,6 +220,12 @@ COMMIT=<sha> ./scripts/deploy_openwebui.sh
 # or deploy current HEAD of open-webui-src:
 ./scripts/deploy_openwebui.sh
 TXT
+
+echo "[post] smoke_v1 AFTER" | tee -a "${LOG_FILE}"
+if ! "${SMOKE_CMD[@]}" | tee -a "${LOG_FILE}"; then
+  echo "smoke_v1 AFTER failed" | tee -a "${LOG_FILE}"
+  exit 1
+fi
 
 notify_ok
 
