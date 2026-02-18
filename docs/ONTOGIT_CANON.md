@@ -44,6 +44,19 @@
   - `static/static/site.webmanifest`
   - `static/static/loader.js`
   - `src/lib/config/branding.ts`
+- Canonical icon source files (in `open-webui-src` repo):
+  - `static/static/alba-icon-192.png` (source 192)
+  - `static/static/alba-icon-512.png` (source 512)
+  - `static/static/ontos-live-favicon.png` (source favicon)
+- Served runtime static files (must be byte-identical copies of canonical source files):
+  - `/static/alba-icon-192-v2.png` <- copy of `static/static/alba-icon-192.png`
+  - `/static/alba-icon-512-v2.png` <- copy of `static/static/alba-icon-512.png`
+  - `/static/alba-favicon-v2.png` <- copy of `static/static/ontos-live-favicon.png`
+- Runtime reference points (where served paths are wired):
+  - `src/app.html` (favicon links, manifest link, loader script link, splash logo src)
+  - `static/static/site.webmanifest` (PWA icon src)
+  - `static/static/loader.js` (loader logo src override)
+  - `src/lib/config/branding.ts` (`faviconPath`)
 - Acceptance checklist:
   - title is `Ontos.Live`
   - manifest `name` is `Ontos.Live`
@@ -53,10 +66,23 @@
   - no `Open WebUI` branding text remains
 - Cache-bust + recovery:
   - rename manifest/icon assets on branding change (cache-bust by filename).
+  - current cache-bust revision in runtime links: `alba-20260218-1`.
   - if stale branding persists:
     - unregister service workers
     - clear site data/storage
     - hard reload.
+- Operator-only verification snippet (run on host, not sandbox):
+```bash
+cd /home/ontoslive/ontos_work/open-webui-src
+sha256sum \
+  static/static/alba-icon-192.png static/static/alba-icon-192-v2.png \
+  static/static/alba-icon-512.png static/static/alba-icon-512-v2.png \
+  static/static/ontos-live-favicon.png static/static/alba-favicon-v2.png
+
+curl -sS "https://alba.ontos.live/static/alba-icon-192-v2.png?v=alba-20260218-1" -o /tmp/served-alba-icon-192-v2.png
+curl -sS "https://alba.ontos.live/static/alba-favicon-v2.png?v=alba-20260218-1" -o /tmp/served-alba-favicon-v2.png
+sha256sum /tmp/served-alba-icon-192-v2.png /tmp/served-alba-favicon-v2.png
+```
 
 ## Kelia UI Profile (server-driven)
 - `ui_profile` is user-scoped, not app-scoped.
