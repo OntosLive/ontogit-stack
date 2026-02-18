@@ -42,6 +42,12 @@ log "Check local OpenWebUI: http://127.0.0.1:3000/api/version"
 LOCAL_CODE="$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/version || true)"
 [ "${LOCAL_CODE}" = "200" ] || die "local OpenWebUI is not ready on 127.0.0.1:3000 (code=${LOCAL_CODE:-ERR})"
 
+log "Apply STT guardrail"
+(
+  cd "${STACK_DIR}"
+  bash "${OPS_DIR}/stt_guard.sh"
+)
+
 log "Generate canonical tunnel unit via scripts/ops/alba_local_tunnel_unit_install.sh"
 (
   cd "${STACK_DIR}"
