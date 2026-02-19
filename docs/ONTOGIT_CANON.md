@@ -153,6 +153,23 @@ sha256sum /tmp/served-alba-icon-192-v2.png /tmp/served-alba-favicon-v2.png
 - Kelia profile denies admin surface, notes surface, and privileged workspace surfaces.
 - Socket room joins must enforce the same ACL as REST endpoints (no cross-user joins by direct id).
 
+## Payload Audit (Tokens)
+- Purpose: explain token jumps by auditing the final upstream payload shape without logging raw user text.
+- Baseline first-turn cost around `~1000` tokens typically comes from OpenWebUI system preamble / model system prompt scaffolding.
+- Large first-turn cost around `~8000` is usually caused by one or both:
+  - large tool schemas (`tools[].function.parameters`, etc.),
+  - retrieval/context injection (RAG/docs/context fields or equivalent pre-injected system content).
+- Backend gate:
+  - set `ONTOGIT_PAYLOAD_AUDIT=1` on backend process.
+  - optional: `ONTOGIT_PAYLOAD_AUDIT_TS=<ts>` to pin audit run directory.
+- Run one audited request (no upstream call when audit-only header is used):
+  - `OPENWEBUI_TOKEN=... OPENWEBUI_MODEL=... ONTOGIT_PAYLOAD_AUDIT_TS=$(date +%Y%m%d_%H%M%S) bash scripts/ops/payload_audit_v1.sh`
+- Compare two users:
+  - `bash scripts/ops/payload_audit_diff.sh <admin.json> <user.json>`
+- Output artifacts:
+  - `ops/state/<ts>_payload_audit_v1/<request_id>_<user_id>.json`
+  - contains only lengths/counts (`messages/tools/retrieval/other_large_fields`), never raw content.
+
 ## STT Canon (local whisper CUDA)
 - Base mode:
   - `WHISPER_MODEL=medium`
