@@ -181,5 +181,50 @@ SMOKE_NO_RECREATE=1 ./scripts/smoke_enforcement_hard.sh
 ```
 
 ## Dev profiles
+
 - `DEV_PROFILE=minimal` (default): ontogit-stack + OpenWebUI image, **no** ollama, **no** build.
 - `DEV_PROFILE=full`: includes ollama (and allows build if `DEV_BUILD=1`).
+
+## 🔒 Production Stack Launch Ritual (VPS Only)
+
+The production stack MUST always be started using BOTH compose files.
+
+Never run production with only `docker-compose.yml`.
+
+Correct command (VPS):
+
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+
+docker compose \
+-f docker-compose.yml \
+-f docker-compose.webui-ontogate.yml \
+up -d --remove-orphans
+```
+
+Never use:
+
+- `docker compose up -d`
+- `docker compose up -d open-webui`
+- docker compose down (unless intentionally resetting full stack)
+- docker run manually
+- mixing different compose file combinations
+
+Verification:
+
+```bash
+docker compose \
+-f docker-compose.yml \
+-f docker-compose.webui-ontogate.yml \
+ps
+
+bash scripts/health.sh
+bash scripts/ops/alba_status.sh
+```
+
+Expected state:
+
+- All services are Up
+- No orphan containers
+- open-webui present
+- No exited containers
