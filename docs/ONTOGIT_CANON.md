@@ -136,6 +136,40 @@ sha256sum /tmp/served-alba-icon-192-v2.png /tmp/served-alba-favicon-v2.png
   - in Kelia, user menu exists only in left-bottom sidebar footer; absent in top-right.
   - no admin surface in Kelia.
 
+## Notes Privacy Invariant
+- Notes are server-scoped per-user (owner-only by `note.user_id`).
+- Cross-user note read/list/search/update/delete is forbidden.
+- Admin-authored notes are not visible to non-admin users and are not readable by other admins unless they are the owner.
+- Kelia profile: Notes surface is hidden in UI and notes API access is forbidden server-side.
+- There is no workspace-wide notes scope in production policy.
+- Quick smoke:
+  1. create note as `admin_a`; capture note id.
+  2. as `user_b`, call `GET /api/v1/notes/`, `GET /api/v1/notes/search`, `GET /api/v1/notes/{id}` -> must not return `admin_a` note.
+  3. as `kelia` user, call `/api/v1/notes/*` -> `403`.
+
+## Security Invariant
+- Server-side authorization is source-of-truth; UI hiding is not a security control.
+- Owner-scoped resources must filter by owner (`owner_user_id` / `user_id`) at query-time.
+- Kelia profile denies admin surface, notes surface, and privileged workspace surfaces.
+- Socket room joins must enforce the same ACL as REST endpoints (no cross-user joins by direct id).
+
+## Payload Audit (Tokens)
+- Purpose: explain token jumps by auditing the final upstream payload shape without logging raw user text.
+- Baseline first-turn cost around `~1000` tokens typically comes from OpenWebUI system preamble / model system prompt scaffolding.
+- Large first-turn cost around `~8000` is usually caused by one or both:
+  - large tool schemas (`tools[].function.parameters`, etc.),
+  - retrieval/context injection (RAG/docs/context fields or equivalent pre-injected system content).
+- Backend gate:
+  - set `ONTOGIT_PAYLOAD_AUDIT=1` on backend process.
+  - optional: `ONTOGIT_PAYLOAD_AUDIT_TS=<ts>` to pin audit run directory.
+- Run one audited request (no upstream call when audit-only header is used):
+  - `OPENWEBUI_TOKEN=... OPENWEBUI_MODEL=... ONTOGIT_PAYLOAD_AUDIT_TS=$(date +%Y%m%d_%H%M%S) bash scripts/ops/payload_audit_v1.sh`
+- Compare two users:
+  - `bash scripts/ops/payload_audit_diff.sh <admin.json> <user.json>`
+- Output artifacts:
+  - `ops/state/<ts>_payload_audit_v1/<request_id>_<user_id>.json`
+  - contains only lengths/counts (`messages/tools/retrieval/other_large_fields`), never raw content.
+
 ## STT Canon (local whisper CUDA)
 - Base mode:
   - `WHISPER_MODEL=medium`
