@@ -119,6 +119,31 @@ cd /home/ontoslive/ontos_work/open-webui-src && docker compose up -d open-webui
 
 Those commands bypass the ALBA ontogate image, canonical volume, header injector, STT env, local env and branding.
 
+## Last verified recovery state
+
+On the 2026-05-24 recovery, the host was canonized into this shape:
+
+```text
+canonical deploy repo: /home/ontoslive/ontos_work/ontogit-stack
+canonical webui source repo: /home/ontoslive/ontos_work/open-webui-src
+runtime container owning port 3000: ontogit-stack-open-webui-1
+runtime image: open-webui-ontogate:e677d7c98
+runtime volume: /home/ontoslive/ontos_data/openwebui-data-vps-current:/app/backend/data
+local check: http://127.0.0.1:3000 -> 200 OK
+public check: https://alba.ontos.live -> 200 OK
+```
+
+Legacy/non-canonical paths were isolated by renaming, not deleting:
+
+```text
+/home/ontoslive/ontos_work/ontogit-stack.NON_GIT_20260524_110824
+/root/ontogit-stack.LEGACY_20260524_110824
+/root/open-webui-src.LEGACY_20260524_110824
+/root/open-webui.ACCIDENTAL.20260312_031220.LEGACY_20260524_110824
+```
+
+The vanilla image pattern `ghcr.io/open-webui/open-webui:main` was removed during recovery. If it returns and owns port 3000, it is a false runtime.
+
 ## Operator rule for assistants and agents
 
 Before suggesting any ALBA deploy command, read this file first.
