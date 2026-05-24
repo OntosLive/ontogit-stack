@@ -76,6 +76,68 @@ The compose overlay must include environment files:
 .env.local
 ```
 
+## Provider chain invariant
+
+If the UI model list is empty, check the provider chain before touching the database or volume.
+
+Expected chain:
+
+```text
+open-webui -> header-injector:8089 -> openai-proxy:8088 -> OpenAI-compatible upstream
+```
+
+Host checks:
+
+```bash
+curl -sS --max-time 10 http://127.0.0.1:8088/v1/models
+curl -sS --max-time 10 http://127.0.0.1:8089/v1/models
+```
+
+If `8088` works but `8089` is connection refused, `header-injector` is missing or stopped. Minimal safe recovery:
+
+```bash
+cd /home/ontoslive/ontos_work/ontogit-stack
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.webui-ontogate.yml up -d --no-deps --force-recreate header-injector
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.webui-ontogate.yml ps
+curl -sS --max-time 10 http://127.0.0.1:8089/v1/models
+```
+
+Do not change `OPENAI_API_BASE_URL` to bypass `header-injector` unless intentionally disabling the ALBA/OntoGit provider layer.
+
+## Chat DB diagnostic invariant
+
+If chats appear missing, diagnose the database before changing mounts.
+
+Current known mounted DB on 2026-05-24:
+
+```text
+/home/ontoslive/ontos_data/openwebui-data-vps-current/webui.db
+size: 10231808
+chat_count: 91
+user_count: 7
+model_count: 148
+latest chat timestamp found by read-only scan: 2026-03-18 06:40:54 UTC
+```
+
+Other DBs found during 2026-05-24 recovery:
+
+```text
+/home/ontoslive/ontos_data/openwebui-data/webui.db
+size: 483328
+chat_count: 0
+user_count: 0
+model_count: 0
+
+/root/remediation_backups/20260306_133001/var_docker/webui.db
+size: 7688192
+chat_count: 60
+user_count: 6
+model_count: 134
+latest chat timestamp: 2026-03-06 09:10:19 UTC
+```
+
+No discovered DB had chats newer than the mounted `openwebui-data-vps-current/webui.db` at that scan. If recent chats still appear missing in UI, next diagnostic is read-only user/chat ownership, not volume replacement.
+
 ## Recovery checklist after VPS stop/reboot/payment suspension
 
 1. Restore SSH/network access first.
