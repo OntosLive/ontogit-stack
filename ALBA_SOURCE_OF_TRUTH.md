@@ -39,7 +39,7 @@ If this appears on port 3000, it is the vanilla Open WebUI and must be stopped b
 
 ## Canonical volume
 
-The ALBA data volume mount is:
+The current ALBA canonical data mount is:
 
 ```text
 /home/ontoslive/ontos_data/openwebui-data-vps-current:/app/backend/data
@@ -108,7 +108,7 @@ Do not change `OPENAI_API_BASE_URL` to bypass `header-injector` unless intention
 
 If chats appear missing, diagnose the database before changing mounts.
 
-Current known mounted DB on 2026-05-24:
+Current mounted DB on 2026-05-24:
 
 ```text
 /home/ontoslive/ontos_data/openwebui-data-vps-current/webui.db
@@ -116,8 +116,19 @@ size: 10231808
 chat_count: 91
 user_count: 7
 model_count: 148
-latest chat timestamp found by read-only scan: 2026-03-18 06:40:54 UTC
+latest chat timestamp: 2026-03-18 06:40:54 UTC
 ```
+
+DB with newer chats discovered during 2026-05-24 read-only forensic scan:
+
+```text
+/var/lib/docker/volumes/open-webui_open-webui/_data/webui.db
+chat_count: 149
+user_count: 7
+latest chat timestamp: 2026-05-22 16:15:46 UTC
+```
+
+This means the missing chats newer than 2026-03-18 physically exist in the old named Docker volume `open-webui_open-webui`, not in the current bind mount `openwebui-data-vps-current`.
 
 Other DBs found during 2026-05-24 recovery:
 
@@ -136,7 +147,23 @@ model_count: 134
 latest chat timestamp: 2026-03-06 09:10:19 UTC
 ```
 
-No discovered DB had chats newer than the mounted `openwebui-data-vps-current/webui.db` at that scan. If recent chats still appear missing in UI, next diagnostic is read-only user/chat ownership, not volume replacement.
+Before any migration, perform a read-only forensic diff between:
+
+```text
+/home/ontoslive/ontos_data/openwebui-data-vps-current/webui.db
+/var/lib/docker/volumes/open-webui_open-webui/_data/webui.db
+```
+
+Required safe comparison:
+
+```text
+- sha256sum of both files
+- schema/table list of both files
+- chat.id,user_id,title,updated_at dump of both files
+- exact diff by chat IDs
+```
+
+Do not copy one DB over the other until the diff is understood and a backup exists.
 
 ## Recovery checklist after VPS stop/reboot/payment suspension
 
